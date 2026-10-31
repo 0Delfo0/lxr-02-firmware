@@ -34,7 +34,12 @@
 
 static uint16_t midiParser_activeNrpnNumber = 0;
 
-uint8_t midiParser_originalCcValues[0xff];
+/* Indexed by a flat parameter number: msg.data1 (0-255) on the MIDI_CC path,
+   msg.data1 + 128 (128-383) on the MIDI_CC2 path, and read back with the same
+   numbering by autoNode_setDestination() in automationNode.c. It used to be
+   declared [0xff], 255 entries, so every CC2 parameter above 126 wrote outside
+   it - the documented mute NRPNs 200-206 landed 73 to 79 bytes past the end. */
+uint8_t midiParser_originalCcValues[MIDI_ORIGINAL_CC_VALUE_COUNT];
 
 // this will be set to some value if we are ignoring all mtc messages until the next 0 message
 static uint8_t midiParser_mtcIgnore=1;
@@ -165,8 +170,11 @@ void midiParser_ccHandler(MidiMsg msg, uint8_t updateOriginalValue, uint8_t isFl
 	{
 
 		const uint16_t paramNr = msg.data1-1;
+		/* msg.data1, not paramNr+1: paramNr underflows to 0xFFFF for CC 0 and
+		   the write then lands at index 65536. CC 0 is Bank Select, and the kit
+		   morph reaches it on its own through preset_morph_tick(). */
 		if(updateOriginalValue && !isFloatModulator) {
-			midiParser_originalCcValues[paramNr+1] = value.itg;
+			midiParser_originalCcValues[msg.data1] = value.itg;
 		}
 
 		switch(msg.data1)

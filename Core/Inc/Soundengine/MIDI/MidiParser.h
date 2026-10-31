@@ -50,7 +50,10 @@ void midiParser_setFilter(uint8_t is_tx, uint8_t value);
 
 // a place to store all the incoming CC values
 //needed to know to which value the automation node should return
-extern uint8_t midiParser_originalCcValues[0xff];
+/* 384 = the whole index space the parser and automationNode.c use:
+   0-255 for MIDI_CC and 128-383 for MIDI_CC2 (msg.data1 + 128). */
+#define MIDI_ORIGINAL_CC_VALUE_COUNT 384
+extern uint8_t midiParser_originalCcValues[MIDI_ORIGINAL_CC_VALUE_COUNT];
 
 
 extern uint8_t midi_MidiChannels[8]; // last element is global channel
