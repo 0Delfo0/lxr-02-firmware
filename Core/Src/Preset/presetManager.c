@@ -44,6 +44,13 @@ char savefileNames[NUM_KIT_SLOTS][NUM_SAVEFILE_NAMES][8];
 
 char currentFolder[13];
 
+/* Working buffer for empty_directory(), which builds the full path of every file it
+   deletes into the buffer it is given. currentFolder is 13 bytes and cannot hold
+   "/projNN" plus '/' plus an 8.3 name. Kept at file scope and not on the stack because
+   the project save is the deepest call path in the firmware and runs with the audio
+   interrupt active. */
+static char emptyDirPath[256];
+
 //char presetNameBuffer[8];
 //char currentName[8];
 //uint8_t activePresetNr = 0;
@@ -694,7 +701,8 @@ void preset_processTimer()
 
 
 FRESULT empty_directory (
-    char* path      /* Working buffer filled with start directory */
+    char* path,     /* Working buffer filled with start directory */
+    UINT sz_buff    /* Size of the working buffer (items) */
 )
 {
 	FILINFO fno;
@@ -705,17 +713,26 @@ FRESULT empty_directory (
     fr = f_opendir(&dir, path);
     if (fr == FR_OK) {
         for (i = 0; path[i]; i++) ;
+        if (i + 1 >= sz_buff) {     /* No room for the separator */
+            f_closedir(&dir);
+            return FR_NOT_ENOUGH_CORE;
+        }
         path[i++] = '/';
         for (;;) {
             fr = f_readdir(&dir, &fno);
             if (fr != FR_OK || !fno.fname[0]) break;
             if (_FS_RPATH && fno.fname[0] == '.') continue;
             j = 0;
-            do
+            do {
+                if (i + j >= sz_buff) {     /* Path does not fit the working buffer */
+                    fr = FR_NOT_ENOUGH_CORE;
+                    break;
+                }
                 path[i+j] = fno.fname[j];
-            while (fno.fname[j++]);
+            } while (fno.fname[j++]);
+            if (fr != FR_OK) break;
             if (fno.fattrib & AM_DIR) {
-                fr = empty_directory(path);
+                fr = empty_directory(path, sz_buff);
                 if (fr != FR_OK) break;
             }
             fr = f_unlink(path);
@@ -2350,7 +2367,8 @@ FRESULT preset_saveProject(uint8_t presetNr)
 	}
 	else
 	{
-		res = empty_directory(currentFolder);
+		sprintf(emptyDirPath, "%s", currentFolder);
+		res = empty_directory(emptyDirPath, sizeof emptyDirPath / sizeof emptyDirPath[0]);
 		if(res != FR_OK)
 		{
 			lcd_process_display_interrupt = 1;
