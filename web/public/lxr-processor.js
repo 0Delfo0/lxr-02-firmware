@@ -40,6 +40,16 @@ function wasiImports(getMemory, log) {
 		},
 		fd_seek() { return 70; /* ESPIPE */ },
 		fd_close() { return 0; },
+		/* Newer wasi-libc imports clock_time_get even when nothing in the
+		 * firmware asks for the time; without it the module fails to link with
+		 * "import object field 'clock_time_get' is not a Function". Determinism
+		 * is unaffected: the emulated TIM14, SysTick and TIM2 are driven by the
+		 * number of rendered samples (emu/hw/hal_emu.c), not by this clock. */
+		clock_time_get(id, precision, out) {
+			const view = new DataView(getMemory().buffer);
+			view.setBigUint64(out, BigInt(Date.now()) * 1000000n, true);
+			return 0;
+		},
 	};
 }
 
