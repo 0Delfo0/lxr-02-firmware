@@ -146,7 +146,14 @@ target_compile_options(lxr_core PRIVATE $<IF:$<CONFIG:Debug>,-O0,-O2> -w)
 # oscillators cast negative and > 2^32 phase offsets to uint32_t. Without
 # this, x86 wraps and WebAssembly returns 0 for those, and both sound
 # different from the device and from each other.
-target_compile_options(lxr_core PUBLIC -fno-strict-float-cast-overflow)
+if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+    target_compile_options(lxr_core PUBLIC -fno-strict-float-cast-overflow)
+else()
+    # GCC has no equivalent flag and no __fp16 on x86. Logic (sequencer, menus,
+    # preset/SD) behaves the same; audio output does not, because out-of-range
+    # float to int casts wrap instead of saturating. Use clang to compare sound.
+    target_compile_options(lxr_core PUBLIC -D__fp16=_Float16)
+endif()
 
 if(CMAKE_SYSTEM_PROCESSOR STREQUAL "wasm32")
     # A reactor module (no main): the AudioWorklet instantiates it, calls
