@@ -916,6 +916,11 @@ static FRESULT preset_writeDrumsetData(uint8_t presetNr, uint8_t isMorph)
 //----------------------------------------------------
 void preset_loadDrumsetRam(uint8_t presetNr, uint8_t isMorph, uint8_t sendImmediate)
 {
+	//mainParameters has NUM_KIT_SLOTS rows. The bound is checked here and not at
+	//the call sites because presetNr arrives from three places that cannot all be
+	//trusted: a MIDI bank select carries 0-127 (frontPanelParser.c), a pattern's
+	//kit number is read from the card, and only the menu clamps its own value.
+	if(presetNr >= NUM_KIT_SLOTS) return;
 	soundengine_process();
 	if(isMorph)
 	{
@@ -947,6 +952,8 @@ void preset_loadDrumsetRam(uint8_t presetNr, uint8_t isMorph, uint8_t sendImmedi
 //----------------------------------------------------
 void preset_saveDrumsetRam(uint8_t presetNr, uint8_t isMorph)
 {
+	//Same array, same reason, and this one writes: see preset_loadDrumsetRam().
+	if(presetNr >= NUM_KIT_SLOTS) return;
 	if(isMorph)
 	{
 		for(uint16_t i=0;i<END_OF_SOUND_PARAMETERS;i++)
