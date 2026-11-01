@@ -29,13 +29,26 @@ add_library(lxr_platform OBJECT
     Src/delay.c
     Src/flash_if.c
 )
-# Shown on the boot splash screen; comes from project(VERSION) in the top-level CMakeLists.txt.
+# Boot splash screen (Src/main.c:355): name and version come from the top-level CMakeLists.txt, the
+# build id is read from git at build time so that images from different commits differ on the device.
+set(LXR_GENERATED_DIR ${CMAKE_BINARY_DIR}/generated)
+file(MAKE_DIRECTORY ${LXR_GENERATED_DIR})
+add_custom_target(lxr_build_id ALL
+    COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=${CMAKE_SOURCE_DIR} -DOUTPUT=${LXR_GENERATED_DIR}/fw_build.h
+            -P ${CMAKE_SOURCE_DIR}/cmake/tools/build_id.cmake
+    BYPRODUCTS ${LXR_GENERATED_DIR}/fw_build.h
+    COMMENT "Reading the build id from git"
+    VERBATIM
+)
 set_source_files_properties(Src/main.c PROPERTIES
-    COMPILE_DEFINITIONS "FIRMWARE_VERSION=\" ${PROJECT_VERSION}${LXR_FW_SUFFIX}\""
+    COMPILE_DEFINITIONS "FIRMWARE_NAME=\"${LXR_FW_NAME}\";FIRMWARE_VERSION=\"${PROJECT_VERSION}${LXR_FW_SUFFIX}\""
 )
 set_source_files_properties(Src/Sysex/SysexHandler.c PROPERTIES
     COMPILE_DEFINITIONS "LXR_FW_MAJOR=${PROJECT_VERSION_MAJOR};LXR_FW_MINOR=${PROJECT_VERSION_MINOR};LXR_FW_VERSION_STRING=\"${PROJECT_VERSION}${LXR_FW_SUFFIX}\""
 )
+
+target_include_directories(lxr_platform PRIVATE ${LXR_GENERATED_DIR})
+add_dependencies(lxr_platform lxr_build_id)
 
 # Hardware inputs/outputs: shift-register buttons/LEDs, pots & faders.
 add_library(lxr_io OBJECT

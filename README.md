@@ -15,7 +15,7 @@ drum voices, FX bus, step sequencer, MIDI (DIN + USB), SD-card preset storage an
 Every LXR has a built-in updater (the bootloader) that installs new firmware from the SD card. You
 don't need any extra hardware:
 
-1. [Build the firmware](#building-the-firmware). This creates the update file `LXR_V2_V<version>.img`.
+1. [Build the firmware](#building-the-firmware). This creates the update file `LXR_<name>_V<version>.img`.
 2. [Copy it to the SD card and install it](#installing-the-update) on the LXR.
 
 ### Building the firmware
@@ -63,13 +63,19 @@ When the build has finished it shows where the update file is and how to install
 ```
 ======================================================================
   Firmware update file:
-    .../lxr_desktop_app/build/release/LXR_V2_V1.7-sx.img
+    .../lxr_desktop_app/build/release/LXR_VITRIOL_V1.7-vt.img
   ...
 ```
 
 The version in the file name, and on the LXR's start-up screen, is set by `project(VERSION ...)` in
-[CMakeLists.txt](CMakeLists.txt). Builds of this fork add the suffix `-sx` (`LXR_FW_SUFFIX`), for the
-SysEx protocol described in [docs/sysex.md](docs/sysex.md).
+[CMakeLists.txt](CMakeLists.txt). Builds of this fork are named `VITRIOL` (`LXR_FW_NAME`) and add the
+suffix `-vt` (`LXR_FW_SUFFIX`), for the SysEx protocol described in [docs/sysex.md](docs/sysex.md).
+
+The second line of the start-up screen is the commit the image was built from, `LXR-02 g<hash>`, with a
+trailing `+` when the working tree had uncommitted changes. `cmake/tools/build_id.cmake` reads it from
+git at build time, which is what makes two test images distinguishable on the device. The update file
+name keeps its `LXR` prefix because the updater searches for `LXR*.img`
+([Core/Src/main.c:786](Core/Src/main.c#L786)) and reads 8.3 names only.
 
 The SysEx codec, CPU meter, plate reverb, freeze and feedback FM have host-side unit tests that run
 on your computer: `make -C tests/host` and `python3 tools/test_lxr_status.py`.
@@ -89,7 +95,7 @@ See [docs/performance.md](docs/performance.md).
 
 ### Installing the update
 
-1. Copy `LXR_V2_V<version>.img` from `build/release/` to the top folder of the SD card. Delete any
+1. Copy `LXR_<name>_V<version>.img` from `build/release/` to the top folder of the SD card. Delete any
    older `LXR*.img` files from the card: the updater installs the first one it finds.
    On a Mac, eject the card in Finder before you take it out. Finder also leaves hidden files starting
    with `._` on the card; the updater ignores them.
@@ -131,7 +137,7 @@ All files the build creates (in `build/<preset>/`):
 
 | File                     | Purpose                                                        |
 |--------------------------|----------------------------------------------------------------|
-| `LXR_V2_V<version>.img`  | **Update file for the SD card** (see [Installing the update](#installing-the-update)) |
+| `LXR_<name>_V<version>.img` | **Update file for the SD card** (see [Installing the update](#installing-the-update)) |
 | `LXR_V2_STM32F765.elf`   | Firmware with debug information, for a debugger               |
 | `LXR_V2_STM32F765.bin`   | Raw firmware image (from 0x08008000)                          |
 | `LXR_V2_STM32F765.hex`   | Intel HEX of the same                                         |
@@ -235,7 +241,7 @@ cmake --preset release -DLXR_BOOTLOADER_DIR=path/to/LXR_V2_STM32F765_Bootloader
 
 The build checks that the bootloader is valid for this device: it must fit in the 32 KB bootloader
 sector and accept desktop (`LXRV2IMG`) update images, so the firmware, a full image or the Eurorack
-bootloader are rejected. It then also writes `LXR_V2_V<version>_full.hex`/`.bin` (bootloader +
+bootloader are rejected. It then also writes `LXR_<name>_V<version>_full.hex`/`.bin` (bootloader +
 firmware, the whole flash from 0x08000000) and enables:
 
 ```sh

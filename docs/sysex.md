@@ -1,7 +1,7 @@
 # LXR-02 SysEx protocol (v1)
 
 This document specifies the System Exclusive protocol implemented by this
-fork of the LXR-02 firmware (shown as **`1.7-sx`** on the boot screen). It lets
+fork of the LXR-02 firmware (shown as **`VITRIOL 1.7-vt`** on the boot screen). It lets
 an editor/librarian read and write kits, patterns, global settings and single
 parameters, and get notified when the user edits sounds on the device.
 
@@ -173,7 +173,7 @@ Example (complete frame): `F0 7D 4C 7F 01 01 7F F7`
 |-------|----------|------------------------|
 | protocol version | u7 | 1 |
 | firmware major, minor, patch | 3 × u7 | 1, 7, 0 |
-| firmware version string | 8 × u7 ASCII, `00`-padded | `"1.7-sx"` |
+| firmware version string | 8 × u7 ASCII, `00`-padded | `"1.7-vt"` |
 | `NUM_PARAMS` | u14 | 305 |
 | `END_OF_SOUND_PARAMETERS` (kit length) | u14 | 247 |
 | `PAR_BEGINNING_OF_GLOBALS` | u14 | 272 |
