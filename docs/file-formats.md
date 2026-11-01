@@ -154,7 +154,7 @@ One byte per global parameter, from `PAR_BEGINNING_OF_GLOBALS` (272) up to
 | Firmware | Size | Content |
 |----------|------|---------|
 | Stock 1.7 | 30 bytes | ids 272 … 301 |
-| This fork (`1.7-sx`) | 33 bytes | ids 272 … 304; adds `SysEx` enable (302), `DeviceID` (303, stored as 1–16), `ParmEcho` (304) |
+| This fork (`1.7-vt`) | 33 bytes | ids 272 … 304; adds `SysEx` enable (302), `DeviceID` (303, stored as 1–16), `ParmEcho` (304) |
 
 Compatibility:
 

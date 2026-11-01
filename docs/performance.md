@@ -395,7 +395,7 @@ have the crossfade cost and the average stays ≈2.5–3 %.
 
 ## Hardware test checklist
 
-- [ ] Flash `build/release/LXR_V2_V1.7-sx.img` with the bootloader. The unit
+- [ ] Flash `build/release/LXR_VITRIOL_V1.7-vt.img` with the bootloader. The unit
       boots and plays audio as before.
 - [ ] Global menu: the encoder steps through `syx id ech` and then on to
       `cpu pk vce mix` and `fx xrn`. The entries before them still work.

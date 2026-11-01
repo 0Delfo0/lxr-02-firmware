@@ -42,7 +42,7 @@
 #define LXR_FW_PATCH 0
 #endif
 #ifndef LXR_FW_VERSION_STRING
-#define LXR_FW_VERSION_STRING "1.7-sx"
+#define LXR_FW_VERSION_STRING "1.7-vt"
 #endif
 
 #define PORT_DIN			0x01
