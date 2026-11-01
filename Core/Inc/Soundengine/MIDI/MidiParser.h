@@ -52,7 +52,22 @@ void midiParser_setFilter(uint8_t is_tx, uint8_t value);
 
 // a place to store all the incoming CC values
 //needed to know to which value the automation node should return
-extern uint8_t midiParser_originalCcValues[0xff];
+/* 256 covers every index that is ever READ back:
+     - autoNode_setDestination() reads [node->destination], and destination is
+       assigned from Step.param1Nr (SeqStep.h), a uint8_t, so it cannot exceed
+       255 even from a corrupt .PAT file. It is the only reader.
+     - MIDI_CC writes [msg.data1], 0-127.
+     - MIDI_CC2 writes [msg.data1 + 128]. data1 is 8 bit there, because
+       midiParser_nrpnHandler() truncates a uint16_t NRPN number into it, so
+       that index runs to 383 - past this array on purpose. Those entries have
+       no automation destination that could ask for them (a destination d > 127
+       arrives as data1 = d - 128 and so writes [d], which is <= 255), so the
+       write is bounded in midiParser_ccHandler() rather than carrying 128
+       bytes nothing reads.
+   The old 255 was one short of the readable range, and CC 0 used to land at
+   65536 because paramNr underflowed. */
+#define MIDI_ORIGINAL_CC_VALUE_COUNT 256
+extern uint8_t midiParser_originalCcValues[MIDI_ORIGINAL_CC_VALUE_COUNT];
 
 
 extern uint8_t midi_MidiChannels[8]; // last element is global channel
