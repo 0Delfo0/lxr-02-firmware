@@ -73,7 +73,10 @@ void DecayEg_setDecay(DecayEg* eg, uint8_t data2)
 //--------------------------------------------------
 IN_ITCM_RAM void DecayEg_setSlope(DecayEg* eg, uint8_t data2)
 {
-	const float amount 	= ((data2/127.f)-0.5f)*2;
+	//*1.999f, not *2: at data2 == 127 the factor 2 makes amount exactly 1.0f, so the
+	//division below is by zero and slope becomes +inf, which silences the voice.
+	//slopeEg2_setSlope() has always used 1.999f, capping amount at 0.9995.
+	const float amount 	= ((data2/127.f)-0.5f)*1.999f;
 	eg->slope 			= 2*amount/(1-amount);
 }
 //--------------------------------------------------
