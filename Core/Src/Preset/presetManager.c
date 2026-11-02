@@ -120,6 +120,25 @@ uint32_t preset_patTimer = 0;
 uint8_t preset_kitDirty = 0;
 uint8_t preset_patDirty = 0;
 
+/* Track length as it comes off the card. The sequencer reads 0 as 16
+   (sequencer.c:1413,1636), so 0 is kept; a length above NUM_STEPS is not a
+   length at all. Unchecked, 200 reaches seq_subStepPattern[...][length-1]
+   (sequencer.c:1146) and quantizedStep % length (sequencer.c:2533), which
+   writes a note past the end of the 64-step array. */
+static uint8_t preset_validLength(uint8_t length)
+{
+	return length > NUM_STEPS ? NUM_STEPS : length;
+}
+
+/* A pattern's kit number indexes mainParameters[NUM_KIT_SLOTS] by way of
+   preset_loadDrumsetRam() (main.c:866, sequencer.c:665). The SysEx path
+   already clamps it (SysexHandler.c:425); the card path did not. */
+static void preset_validateKitNr(uint8_t patternNr)
+{
+	if(seq_patternSet.kitNr[patternNr] >= NUM_KIT_SLOTS)
+		seq_patternSet.kitNr[patternNr] = 0;
+}
+
 void preset_initTmpFolder()
 {
 	char folderName[13];
@@ -467,7 +486,7 @@ FRESULT preset_LoadTmpPat()
 				for(uint8_t trk=0; trk<NUM_TRACKS;trk++)
 				{
 					f_read((FIL*)&SDFile,(void*)&next,sizeof(uint8_t),&bytesRead);
-					seq_patternSet.length[patternNr][trk] = next;
+					seq_patternSet.length[patternNr][trk] = preset_validLength(next);
 				}
 
 			success=1; // just to document that we don't consider this a failure, we just didn't read the bytes for this
@@ -477,6 +496,7 @@ FRESULT preset_LoadTmpPat()
 		{
 			f_read((FIL*)&SDFile,(void*)&seq_patternSet.kitNr[patternNr],sizeof(uint8_t),&bytesRead);
 			if(bytesRead == 0) success = 0;
+			preset_validateKitNr(patternNr);
 
 		}
 		if(success && f_size((FIL*)&SDFile) >= 1u + PATTERN_BODY_V3_LEN + SEQ_CONDITION_BYTES)
@@ -1214,6 +1234,11 @@ FRESULT preset_loadLastUsedProjectNrFromSD(uint8_t* projNr)
     }
 
     res=f_read((FIL*)&SDFile, projNr,1, &bytesRead);
+	/* The number indexes savefileNames[NUM_KIT_SLOTS], which menu.c:1988
+	   writes through, by way of menu_selectedPresetNr[SAVE_TYPE_PROJECT]
+	   (main.c:854), so a damaged proj.idx must not get that far. */
+	if(*projNr >= NUM_KIT_SLOTS)
+		*projNr = 0;
 	//close the file handle
 	f_close((FIL*)&SDFile);
 
@@ -2083,7 +2108,7 @@ static uint8_t preset_readPatternData(uint8_t patternNr, uint8_t dataVersion)
 			for(uint8_t trk=0; trk<NUM_TRACKS;trk++)
 			{
 				f_read((FIL*)&SDFile,(void*)&next,sizeof(uint8_t),&bytesRead);
-				seq_patternSet.length[patternNr][trk] = next;
+				seq_patternSet.length[patternNr][trk] = preset_validLength(next);
 			}
 
 		success=1; // just to document that we don't consider this a failure, we just didn't read the bytes for this
@@ -2093,6 +2118,7 @@ static uint8_t preset_readPatternData(uint8_t patternNr, uint8_t dataVersion)
 	{
 		f_read((FIL*)&SDFile,(void*)&seq_patternSet.kitNr[patternNr],sizeof(uint8_t),&bytesRead);
 		if(bytesRead == 0) success = 0;
+		preset_validateKitNr(patternNr);
 
 	}
 	if(success && dataVersion >= 4)
