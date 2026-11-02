@@ -29,7 +29,11 @@ fi
 # ported: CpuMeter.c is HAL-free under CPU_METER_NO_HW - tests/host already
 # builds it that way - so the meter is linked for real rather than stubbed, and
 # mixer.c keeps the timing calls it has on the device.
-SRCS="$SRCS $ROOT/Core/Src/Soundengine/CpuMeter.c"
+# ported: only when the tree has it, so the harness can also build an older base
+# commit - compare.sh renders one - from before the CPU meter existed.
+if [ -f "$ROOT/Core/Src/Soundengine/CpuMeter.c" ]; then
+	SRCS="$SRCS $ROOT/Core/Src/Soundengine/CpuMeter.c"
+fi
 SRCS="$SRCS $ROOT/Core/Src/Soundengine/FxBus.c $ROOT/Core/Src/Soundengine/MIDI/MidiParser.c $ROOT/Core/Src/Soundengine/MIDI/MidiVoiceControl.c $ROOT/Core/Src/Soundengine/MIDI/ParameterArray.c $ROOT/Core/Src/Soundengine/MIDI/MidiMessages.c $ROOT/Core/Src/Preset/initKit.c $ROOT/Core/Src/Soundengine/MIDI/CortexParser.c $ROOT/Core/Src/Soundengine/Soundengine.c"
 # UI side of engine switching (when the tree has it)
 if [ -f "$ROOT/Core/Src/Preset/KitEngines.c" ]; then
