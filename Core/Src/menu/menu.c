@@ -2415,7 +2415,8 @@ void menu_handleLoadSaveMenu(int8_t inc, uint8_t btnClicked)
 					break;
 */
 				case SAVE_TYPE_GLO:
-					preset_loadGlobals();
+					if(!preset_loadGlobals())
+						preset_useDefaultGlobals();
 					menu_resetSaveParameters();						
 					break;
 #if USE_SAMPLES

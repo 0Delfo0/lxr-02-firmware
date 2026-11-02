@@ -89,6 +89,7 @@ FRESULT preset_loadLastUsedProjectNrFromSD(uint8_t* projNr);
 FRESULT preset_saveLastUsedProjectNrToSD(uint8_t projNr);
 
 void preset_loadDefaultGlobals();
+void preset_useDefaultGlobals();
 
 FRESULT preset_saveProject(uint8_t presetNr);
 FRESULT preset_loadProject(uint8_t presetNr, uint8_t clearTmp);
