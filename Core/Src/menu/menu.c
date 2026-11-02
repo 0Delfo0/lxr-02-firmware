@@ -32,6 +32,7 @@
 
 #include "Soundengine/Sequencer/sequencer.h"
 #include "Soundengine/Soundengine.h"
+#include "Soundengine/CpuMeter.h"
 
 
 uint8_t display_refresh_state = 0;
@@ -172,6 +173,8 @@ const Name valueNames[NUM_NAMES] =
 		{SHORT_ROTATION, CAT_EUKLID, LONG_ROTATION}, 		//TEXT_ROTATION
 		{SHORT_FLAM, CAT_STEP, LONG_FLAM}, 		//TEXT_FLAM
 		{SHORT_SHIFT, CAT_STEP, LONG_SHIFT}, 		//TEXT_SHIFT
+		{SHORT_CONDITION, CAT_STEP, LONG_CONDITION}, 	//TEXT_STEP_CONDITION
+		{SHORT_BEAT_REPEAT, CAT_PATTERN, LONG_BEAT_REPEAT}, //TEXT_BEAT_REPEAT
 
 
 		{SHORT_BPM,CAT_GLOBAL,LONG_TEMPO},					//TEXT_BPM
@@ -244,11 +247,25 @@ const Name valueNames[NUM_NAMES] =
 		{SHORT_TIME, CAT_FX, LONG_TIME},/*TEXT_FX_TIME*/
 		{SHORT_PRE, CAT_FX, LONG_PREDELAY},/*TEXT_FX_PREDELAY*/
 		{SHORT_REF, CAT_FX, LONG_REFLECTION},/*TEXT_FX_REFLECTION*/
+		{SHORT_LENGTH, CAT_FX, LONG_LENGTH},/*TEXT_FX_LENGTH*/
+		{SHORT_PITCH, CAT_FX, LONG_PITCH},/*TEXT_FX_PITCH*/
+		{SHORT_GATE, CAT_FX, LONG_GATE},/*TEXT_FX_GATE*/
 		{SHORT_P1, CAT_FX, LONG_P1},/*TEXT_FX_P1*/
 		{SHORT_P2, CAT_FX, LONG_P2},/*TEXT_FX_P2*/
 		{SHORT_P3, CAT_FX, LONG_P3},/*TEXT_FX_P3*/
 		{SHORT_P4, CAT_FX, LONG_P4},/*TEXT_FX_P4*/
 		{SHORT_KCM, CAT_GLOBAL, LONG_PATTERN_MODE},/*TEXT_AUTO_SWITCH_KIT*/
+		{SHORT_SYSEX, CAT_MIDI, LONG_SYSEX},		/*TEXT_SYSEX_ENABLE*/
+		{SHORT_DEVICE_ID, CAT_MIDI, LONG_DEVICE_ID},/*TEXT_SYSEX_DEVICE_ID*/
+		{SHORT_ECHO, CAT_MIDI, LONG_ECHO},			/*TEXT_SYSEX_ECHO*/
+		{SHORT_CPU, CAT_CPU, LONG_CPU_NOW},			/*TEXT_CPU_NOW*/
+		{SHORT_PEAK, CAT_CPU, LONG_CPU_PEAK},		/*TEXT_CPU_PEAK*/
+		{SHORT_VOICES, CAT_CPU, LONG_VOICES},		/*TEXT_CPU_VOICES*/
+		{SHORT_MIXER, CAT_CPU, LONG_MIXER},			/*TEXT_CPU_MIXER*/
+		{SHORT_FX, CAT_CPU, LONG_FX},				/*TEXT_CPU_FX*/
+		{SHORT_XRUNS, CAT_CPU, LONG_XRUNS},			/*TEXT_CPU_XRUNS*/
+		{SHORT_ENGINE, CAT_OSC, LONG_ENGINE},
+		{SHORT_TIMBRE_DECAY, CAT_OSC, LONG_TIMBRE_DECAY},
 
 
 };
@@ -478,12 +495,12 @@ const enum Datatypes PROGMEM parameter_dtypes[NUM_PARAMS] = {
 	    /*PAR_AUDIO_OUT5*/ 		DTYPE_MENU | (MENU_AUDIO_OUT<<8),
 	    /*PAR_AUDIO_OUT6*/ 		DTYPE_MENU | (MENU_AUDIO_OUT<<8),		//220
 	    // these 7
-	    /*PAR_UNUSED1*/		DTYPE_NOTE_NAME,
-	    /*PAR_UNUSED2*/		DTYPE_NOTE_NAME,
-	    /*PAR_UNUSED3*/		DTYPE_NOTE_NAME,
-	    /*PAR_UNUSED4*/		DTYPE_NOTE_NAME,
-	    /*PAR_UNUSED5*/		DTYPE_NOTE_NAME,
-	    /*PAR_UNUSED6*/		DTYPE_NOTE_NAME,
+	    /*PAR_ENGINE_1*/		DTYPE_MENU | (MENU_DRUM_ENGINE<<8),
+	    /*PAR_ENGINE_2*/		DTYPE_MENU | (MENU_DRUM_ENGINE<<8),
+	    /*PAR_ENGINE_3*/		DTYPE_MENU | (MENU_DRUM_ENGINE<<8),
+	    /*PAR_TIMBRE_DECAY_1*/	DTYPE_0B127,
+	    /*PAR_TIMBRE_DECAY_2*/	DTYPE_0B127,
+	    /*PAR_TIMBRE_DECAY_3*/	DTYPE_0B127,
 	    /*PAR_UNUSED7*/		DTYPE_NOTE_NAME,
 
 		/*PAR_PWM_1,*/			DTYPE_0B127,
@@ -524,8 +541,8 @@ const enum Datatypes PROGMEM parameter_dtypes[NUM_PARAMS] = {
 	    /*PAR_P1_VAL*/ 			DTYPE_0B127,							//240
 	    /*PAR_P2_VAL*/ 			DTYPE_0B127,
 	    /*PAR_SHUFFLE*/ 		DTYPE_0B127,
-	    /*PAR_UNUSED*/ 			DTYPE_0B127,
-	    /*PAR_PATTERN_NEXT*/ 	DTYPE_MENU | (MENU_NEXT_PATTERN<<8),
+	    /*PAR_UNUSED*/ 			DTYPE_MENU | (MENU_STEP_CONDITION<<8),
+	    /*PAR_PATTERN_NEXT*/ 	DTYPE_MENU | (MENU_BEAT_REPEAT<<8),
 	    /*PAR_TRACK_LENGTH*/ 	DTYPE_1B64,
 	    /*PAR_GLO_SAT*/			DTYPE_0B127,
 	    /*PAR_POS_Y*/ 			DTYPE_0B127,
@@ -565,6 +582,9 @@ const enum Datatypes PROGMEM parameter_dtypes[NUM_PARAMS] = {
 	    /*PAR_MIDI_NOTE6*/		DTYPE_NOTE_NAME,
 	    /*PAR_MIDI_NOTE7*/		DTYPE_NOTE_NAME,
 		/*PAR_PATTERN_MODE*/ DTYPE_MENU | (MENU_PAT_MODE<<8),
+		/*PAR_SYSEX_ENABLE*/	DTYPE_ON_OFF,
+		/*PAR_SYSEX_DEVICE_ID*/	DTYPE_1B16,
+		/*PAR_SYSEX_ECHO*/		DTYPE_ON_OFF,
 };
 
 
@@ -1510,6 +1530,85 @@ static void menu_displayModTargetShort(uint8_t curParmVal, char *valueAsText, ch
 }
 
 //-----------------------------------------------------------------
+// read-only CPU meter entries of the global menu, see docs/performance.md
+static uint8_t menu_isCpuMeterText(uint8_t textId)
+{
+	return (textId >= TEXT_CPU_NOW) && (textId <= TEXT_CPU_XRUNS);
+}
+//-----------------------------------------------------------------
+// right aligned decimal, space padded, clamped to the largest value that fits
+static void menu_putDigits(char *buf, uint8_t width, uint16_t v)
+{
+	uint16_t max = 9;
+	for(uint8_t i = 1; i < width; i++) max = (uint16_t)(max * 10 + 9);
+	if(v > max) v = max;
+	for(int8_t i = (int8_t)(width - 1); i >= 0; i--) {
+		buf[i] = (char)((v || i == width - 1) ? '0' + v % 10 : ' ');
+		v /= 10;
+	}
+}
+//-----------------------------------------------------------------
+// load in 1/10 % or the underrun count
+static uint16_t menu_cpuMeterValue(uint8_t textId)
+{
+	CpuMeterReport r;
+	cpuMeter_report(&cpuMeter, &r);
+	switch(textId)
+	{
+	case TEXT_CPU_PEAK:		return r.peak;
+	case TEXT_CPU_VOICES:	return r.section[CPU_SECTION_VOICES];
+	case TEXT_CPU_MIXER:	return r.section[CPU_SECTION_MIXER];
+	case TEXT_CPU_FX:		return r.section[CPU_SECTION_FX];
+	case TEXT_CPU_XRUNS:	return r.underruns;
+	default:				return r.now;
+	}
+}
+//-----------------------------------------------------------------
+// 3 characters: load as "d.d" percent below 10 %, whole percent above; xruns as count
+static void menu_cpuMeterText(uint8_t textId, char *buf)
+{
+	const uint16_t v = menu_cpuMeterValue(textId);
+	if(textId == TEXT_CPU_XRUNS) {
+		menu_putDigits(buf, 3, v);
+	} else if(v < 100) {
+		buf[0] = (char)('0' + v / 10);
+		buf[1] = '.';
+		buf[2] = (char)('0' + v % 10);
+	} else {
+		menu_putDigits(buf, 3, (uint16_t)((v + 5) / 10));
+	}
+}
+//-----------------------------------------------------------------
+// 6 characters for the edit view: " 12.3%" style load, or the full xrun count
+static void menu_cpuMeterTextLong(uint8_t textId, char *buf)
+{
+	uint16_t v = menu_cpuMeterValue(textId);
+	if(textId == TEXT_CPU_XRUNS) {
+		menu_putDigits(buf, 6, v);
+	} else {
+		if(v > 9999) v = 9999;
+		menu_putDigits(buf, 3, (uint16_t)(v / 10));
+		buf[3] = '.';
+		buf[4] = (char)('0' + v % 10);
+		buf[5] = '%';
+	}
+}
+//-----------------------------------------------------------------
+// main loop: refresh the CPU meter entries while they are shown
+void menu_cpuMeterTick()
+{
+	static uint32_t lastTick = 0;
+	const uint32_t now = HAL_GetTick();
+	if(now - lastTick < 250) return;
+	lastTick = now;
+
+	if(menu_activePage != MENU_MIDI_PAGE) return;
+	const uint8_t activeParameter	= menuIndex & MASK_PARAMETER;
+	const uint8_t activePage		= (menuIndex&MASK_PAGE)>>PAGE_SHIFT;
+	if(menu_isCpuMeterText(pgm_read_byte(&menuPages[MENU_MIDI_PAGE][activePage].top1 + activeParameter)))
+		menu_repaint();
+}
+//-----------------------------------------------------------------
 // paint the screen when in normal parameter edit mode
 // (as opposed to repainting the load save screen)
 void menu_repaintGeneric()
@@ -1567,7 +1666,11 @@ void menu_repaintGeneric()
 				(const char PROGMEM *)(&longNames[pgm_read_byte(&valueNames[parName].longName)]));
 
 			//Bottom row -> parameter value (set below)
-			switch(parameter_dtypes[parNr] & 0xFF)
+			if(menu_isCpuMeterText(parName))
+			{
+				menu_cpuMeterTextLong(parName, &editDisplayBuffer[1][10]);
+			}
+			else switch(parameter_dtypes[parNr] & 0xFF)
 			{
 			case DTYPE_TARGET_SELECTION_VELO: //switch(parameters_dtypes[parNr] & 0x0F)
 			case DTYPE_TARGET_SELECTION_LFO:
@@ -1698,7 +1801,10 @@ void menu_repaintGeneric()
 			curParmVal = activeParameters[parNr];
 
 			//convert the parameter uint8_t value to a 3 place char
-			if(parNr==PAR_NONE) {
+			const uint8_t textId = pgm_read_byte(&ap->top1 + i + is2ndPage);
+			if(menu_isCpuMeterText(textId)) {
+				menu_cpuMeterText(textId, valueAsText);
+			} else if(parNr==PAR_NONE) {
 				memcpy(valueAsText,menuText_blank,3);
 			} else { //not if(parNr==PAR_NONE)
 
@@ -2191,19 +2297,7 @@ void menu_handleLoadSaveMenu(int8_t inc, uint8_t btnClicked)
 				case SAVE_TYPE_KIT:
 #if 1
 
-					preset_loadDrumsetRam(menu_selectedPresetNr[menu_saveOptions.category],0, 0);
-					menu_TargetVoiceGapIndex = getModTargetGapIndex(activeParameters[PAR_TARGET_LFO1 + menu_activeVoice]);
-
-					menu_loadedPresetNr[CURRENT_KIT] = menu_selectedPresetNr[menu_saveOptions.category];
-					//update autosave kit
-					preset_touchTimer(PRESET_KIT_TIMER);
-					//store selected kit in current pattern
-#if USE_PATTERN_EDIT_BUFFER
-					patternBackupBuffer.kitNr = menu_loadedPresetNr[CURRENT_KIT];
-
-#else
-					seq_patternSet.kitNr[seq_activePattern] = menu_loadedPresetNr[CURRENT_KIT];
-#endif
+					menu_loadKit(menu_selectedPresetNr[menu_saveOptions.category]);
 
 #else
 					preset_loadDrumset(menu_selectedPresetNr[menu_saveOptions.category],0);
@@ -2583,6 +2677,8 @@ static uint8_t getMaxEntriesForMenu(uint8_t menuId)
 
 	case MENU_FX:
 		return fxNames[0][0];
+	case MENU_DRUM_ENGINE:
+		return drumEngineNames[0][0];
 
 	case MENU_DIST:
 		return distNames[0][0];
@@ -2604,6 +2700,10 @@ static uint8_t getMaxEntriesForMenu(uint8_t menuId)
 
 	case MENU_STEP_SHIFT:
 			return stepShiftNames[0][0];
+	case MENU_STEP_CONDITION:
+		return stepConditionNames[0][0];
+	case MENU_BEAT_REPEAT:
+		return beatRepeatNames[0][0];
 
 	default:
 		return 0;
@@ -2684,6 +2784,9 @@ static void getMenuItemNameForValue(const uint8_t menuId, const uint8_t curParmV
 	case MENU_FX:
 		p=fxNames[curParmVal+1];
 		break;
+	case MENU_DRUM_ENGINE:
+		p=drumEngineNames[curParmVal+1];
+		break;
 
 	case MENU_DIST:
 		p=distNames[curParmVal+1];
@@ -2711,6 +2814,12 @@ static void getMenuItemNameForValue(const uint8_t menuId, const uint8_t curParmV
 
 	case MENU_STEP_SHIFT:
 		p=stepShiftNames[curParmVal+1];
+		break;
+	case MENU_STEP_CONDITION:
+		p=stepConditionNames[curParmVal+1];
+		break;
+	case MENU_BEAT_REPEAT:
+		p=beatRepeatNames[curParmVal+1];
 		break;
 
 
@@ -2838,6 +2947,15 @@ static void menu_encoderChangeParameter(int8_t inc)
 
 	const uint8_t activeParameter	= menuIndex & MASK_PARAMETER;
 	const uint8_t activePage		= (menuIndex&MASK_PAGE)>>PAGE_SHIFT;
+
+	// CPU meter entries are read-only, turning the encoder on peak or xruns clears both
+	const uint8_t textId = pgm_read_byte(&menuPages[menu_activePage][activePage].top1 + activeParameter);
+	if(menu_isCpuMeterText(textId))
+	{
+		if(textId == TEXT_CPU_PEAK || textId == TEXT_CPU_XRUNS)
+			cpuMeter_resetPeak(&cpuMeter);
+		return;
+	}
 
 	//get address from top1-8 from activeParameter (base adress top1 + offset)
 	uint16_t paramNr		= pgm_read_word(&menuPages[menu_activePage][activePage].bot1 + activeParameter);
@@ -3474,6 +3592,10 @@ void menu_parseGlobalParam(uint16_t paramNr, uint8_t value)
 		frontPanel_sendData(SEQ_CC,SEQ_SHUFFLE,value);
 		break;
 
+	case PAR_UNUSED:
+		frontPanel_sendData(SEQ_CC, SEQ_STEP_CONDITION, value);
+		break;
+
 	case PAR_AUTOM_TRACK:
 		frontPanel_sendData(SEQ_CC,SEQ_SET_AUTOM_TRACK,value);
 		break;
@@ -3728,7 +3850,14 @@ static uint8_t limitPotValue(int8_t diff, uint16_t paramNr)
 			newValue = originalValue + diff;
 	}
 
-	//limit to range
+	return menu_clampParamValue(paramNr, newValue);
+}
+//-----------------------------------------------------------------
+// Limits a value to the legal range of a parameter (same limits as the front panel).
+uint8_t menu_clampParamValue(uint16_t paramNr, uint16_t value)
+{
+	if(paramNr >= NUM_PARAMS) return 0;
+	uint8_t newValue = value > 0xff ? 0xff : (uint8_t)value;
 
 	switch(parameter_dtypes[paramNr] & 0xFF)
 	{
@@ -4278,6 +4407,29 @@ uint8_t menu_getActivePage()
 {
 	return menu_activePage;
 };
+//----------------------------------------------------------------
+void menu_loadKit(uint8_t kitNr)
+{
+	preset_loadDrumsetRam(kitNr, 0, 0);
+	menu_editBufferReplaced();
+
+	menu_loadedPresetNr[CURRENT_KIT] = kitNr;
+	menu_selectedPresetNr[SAVE_TYPE_KIT] = kitNr;
+	//update autosave kit
+	preset_touchTimer(PRESET_KIT_TIMER);
+	//store selected kit in current pattern
+#if USE_PATTERN_EDIT_BUFFER
+	patternBackupBuffer.kitNr = menu_loadedPresetNr[CURRENT_KIT];
+#else
+	seq_patternSet.kitNr[seq_activePattern] = menu_loadedPresetNr[CURRENT_KIT];
+#endif
+}
+//----------------------------------------------------------------
+void menu_editBufferReplaced(void)
+{
+	// **LFOTARGFIX - save the gap index
+	menu_TargetVoiceGapIndex = getModTargetGapIndex(activeParameters[PAR_TARGET_LFO1 + menu_activeVoice]);
+}
 //----------------------------------------------------------------
 uint8_t menu_getActiveVoice()
 {

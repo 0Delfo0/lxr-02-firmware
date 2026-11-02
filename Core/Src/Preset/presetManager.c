@@ -14,6 +14,7 @@
 //#include "../config.h"
 #include <frontPanelParser_ui.h>
 #include "Preset/PresetManager.h"
+#include "Preset/KitEngineFormat.h"
 //#include "../Hardware/SD/ff.h"
 #include "ff.h"
 #include <stdio.h>
@@ -30,6 +31,25 @@
 #include "Soundengine/MIDI/MidiParser.h"
 #include "Soundengine/Sequencer/sequencer.h"
 #include "Soundengine/Soundengine.h"
+
+_Static_assert(PAR_ENGINE_1 == KIT_ENGINE_FIRST, "kit engine layout changed");
+_Static_assert(PAR_TIMBRE_DECAY_1 == KIT_ENGINE_DECAY_FIRST, "kit engine layout changed");
+
+static FRESULT preset_readEngineTag(uint8_t *params)
+{
+	uint8_t tag[KIT_ENGINE_TAG_SIZE];
+	unsigned int count;
+	const FRESULT res = f_read((FIL*)&SDFile, tag, sizeof(tag), &count);
+	if(res == FR_OK) kitEngine_migrate(params, END_OF_SOUND_PARAMETERS, tag, count);
+	return res;
+}
+
+static FRESULT preset_writeEngineTag(void)
+{
+	unsigned int count;
+	const FRESULT res = f_write((FIL*)&SDFile, KIT_ENGINE_TAG, KIT_ENGINE_TAG_SIZE, &count);
+	return res != FR_OK ? res : (count == KIT_ENGINE_TAG_SIZE ? FR_OK : FR_DISK_ERR);
+}
 
 
 
@@ -61,6 +81,9 @@ static char emptyDirPath[256];
 #define NUM_TRACKS 7
 #define NUM_PATTERN 8*/
 #define STEPS_PER_PATTERN NUM_STEPS //64
+#define PATTERN_BODY_V3_LEN (NUM_TRACKS * (NUM_STEPS * sizeof(Step) \
+		+ NUM_STEPS * sizeof(uint8_t)) + NUM_TRACKS * NUM_BARS * sizeof(uint16_t) \
+		+ 1 + NUM_TRACKS + 1)
 
 
 #define FEXT_SOUND 	0
@@ -221,8 +244,8 @@ FRESULT preset_saveTmpKit()
 		return res;
 	}
 
-	//write current preset nr to file
-	res = f_write((FIL*)&SDFile,(void*)&menu_selectedPresetNr[SAVE_TYPE_KIT],1,&bytesWritten);
+	//write current preset nr to file (the kit in the edit buffer, not the load/save menu cursor)
+	res = f_write((FIL*)&SDFile,(void*)&menu_loadedPresetNr[CURRENT_KIT],1,&bytesWritten);
 	if(res != FR_OK)
 	{
 		f_close((FIL*)&SDFile);
@@ -234,16 +257,19 @@ FRESULT preset_saveTmpKit()
 		return res;
 	}
 	//write the preset data
-	f_write((FIL*)&SDFile,activeParameters,END_OF_SOUND_PARAMETERS,&bytesWritten);
+	res = f_write((FIL*)&SDFile,activeParameters,END_OF_SOUND_PARAMETERS,&bytesWritten);
+	if(res == FR_OK && bytesWritten != END_OF_SOUND_PARAMETERS) res = FR_DISK_ERR;
+	if(res == FR_OK) res = preset_writeEngineTag();
 
 	//close the file
-	f_close((FIL*)&SDFile);
+	const FRESULT closeRes = f_close((FIL*)&SDFile);
+	if(res == FR_OK) res = closeRes;
 #if USE_INTERRUPT_ONLY_DURING_SAVE_PROJ
 			HAL_TIM_Base_Stop_IT(&htim2);	//calc sample interrupt - prio 1
 #else
 
 #endif
-	return FR_OK;
+	return res;
 }
 
 FRESULT preset_LoadTmpKit()
@@ -279,6 +305,7 @@ FRESULT preset_LoadTmpKit()
 			// set to 0 for any that were not read from the file
 			if(END_OF_SOUND_PARAMETERS-bytesRead)
 				memset(para+bytesRead,0,END_OF_SOUND_PARAMETERS-bytesRead);
+			res = preset_readEngineTag(para);
 
 			//special case mod targets. normalize.
 			const uint8_t nmt=getNumModTargets();
@@ -299,6 +326,9 @@ FRESULT preset_LoadTmpKit()
 
 		// update the soundengine with the new parameters
 		if(res==FR_OK) {
+			// the edit buffer now holds this kit
+			if(kitNr < NUM_KIT_SLOTS)
+				menu_loadedPresetNr[CURRENT_KIT] = kitNr;
 			preset_sendDrumsetParameters();
 			return FR_OK;
 		}
@@ -358,6 +388,7 @@ FRESULT preset_LoadTmpPat()
 		seq_copyPatternToBackupBuffer(seq_activePattern);
 		//frontParser_shownPattern = menu_playedPattern;
 		uint8_t patternNr = menu_playedPattern;
+		memset(seq_patternSet.seq_conditions[patternNr], 0, SEQ_CONDITION_BYTES);
 
 	//---------------- read pattern data -----------------------------
 
@@ -459,6 +490,12 @@ FRESULT preset_LoadTmpPat()
 			if(bytesRead == 0) success = 0;
 
 		}
+		if(success && f_size((FIL*)&SDFile) >= 1u + PATTERN_BODY_V3_LEN + SEQ_CONDITION_BYTES)
+		{
+			f_read((FIL*)&SDFile, seq_patternSet.seq_conditions[patternNr],
+					SEQ_CONDITION_BYTES, &bytesRead);
+			if(bytesRead != SEQ_CONDITION_BYTES) success = 0;
+		}
 
 		if( success == 0)
 		{
@@ -472,6 +509,7 @@ FRESULT preset_LoadTmpPat()
 #endif
 			return FR_INT_ERR;
 		}
+		seq_copyPatternToBackupBuffer(patternNr);
 
 		success=1;
 		//close the file handle
@@ -495,6 +533,14 @@ FRESULT preset_LoadTmpPat()
 
 }
 
+static FRESULT preset_writeExact(FIL *file, const void *data, UINT size)
+{
+	UINT bytesWritten = 0;
+	FRESULT res = f_write(file, data, size, &bytesWritten);
+	if(res != FR_OK) return res;
+	return bytesWritten == size ? FR_OK : FR_DISK_ERR;
+}
+
 FRESULT preset_saveTmpPat()
 {
 
@@ -507,7 +553,6 @@ FRESULT preset_saveTmpPat()
 #endif
 
 	FRESULT res;
-	UINT bytesWritten;
 	uint8_t presetNr = menu_playedPattern;
 	//lcd_clear();
 	//lcd_home();
@@ -526,16 +571,10 @@ FRESULT preset_saveTmpPat()
 	}
 
 	//write current preset nr to file
-	res = f_write((FIL*)&SDFile,(void*)&menu_playedPattern,1,&bytesWritten);
+	res = preset_writeExact((FIL*)&SDFile, &menu_playedPattern, 1);
 	if(res != FR_OK)
 	{
-		f_close((FIL*)&SDFile);
-#if USE_INTERRUPT_ONLY_DURING_SAVE_PROJ
-			HAL_TIM_Base_Stop_IT(&htim2);	//calc sample interrupt - prio 1
-#else
-
-#endif
-		return res;
+		goto writeFailed;
 	}
 
 	//write pattern data
@@ -548,9 +587,15 @@ FRESULT preset_saveTmpPat()
 		//---------------  write the step data (note, vol, prob, autom.) ---------------
 		for(uint8_t trk=0; trk<NUM_TRACKS;trk++)
 		{
-			f_write((FIL*)&SDFile,(const void*)&seq_patternSet.seq_subStepPattern[presetNr][trk][0],sizeof(Step)*STEPS_PER_PATTERN,&bytesWritten);
+			res = preset_writeExact((FIL*)&SDFile,
+					&seq_patternSet.seq_subStepPattern[presetNr][trk][0],
+					sizeof(Step) * STEPS_PER_PATTERN);
+			if(res != FR_OK) goto writeFailed;
 
-			f_write((FIL*)&SDFile,(const void*)&seq_patternSet.seq_stepTiming[presetNr][trk][0],sizeof(uint8_t)*STEPS_PER_PATTERN,&bytesWritten);
+			res = preset_writeExact((FIL*)&SDFile,
+					&seq_patternSet.seq_stepTiming[presetNr][trk][0],
+					sizeof(uint8_t) * STEPS_PER_PATTERN);
+			if(res != FR_OK) goto writeFailed;
 		}
 
 		//--------------- now the main step data ---------------
@@ -559,7 +604,8 @@ FRESULT preset_saveTmpPat()
 			for(uint8_t bar=0;bar<NUM_BARS; bar++)
 			{
 				const uint16_t mainStepData = seq_patternSet.seq_mainSteps[bar][presetNr][trk];
-				f_write((FIL*)&SDFile,(const void*)&mainStepData,sizeof(uint16_t),&bytesWritten);
+				res = preset_writeExact((FIL*)&SDFile, &mainStepData, sizeof(mainStepData));
+				if(res != FR_OK) goto writeFailed;
 			}
 		}
 
@@ -567,7 +613,9 @@ FRESULT preset_saveTmpPat()
 
 
 		//f_write((FIL*)&SDFile,(const void*)&activeParameters[PAR_SHUFFLE],sizeof(uint8_t),&bytesWritten);
-		f_write((FIL*)&SDFile,(const void*)&seq_patternSet.shuffle[presetNr],sizeof(uint8_t),&bytesWritten);
+		res = preset_writeExact((FIL*)&SDFile, &seq_patternSet.shuffle[presetNr],
+				sizeof(uint8_t));
+		if(res != FR_OK) goto writeFailed;
 
 		//----- pattern/track lengths ------
 		// we reuse the same call from above (when saving main step data)
@@ -578,16 +626,22 @@ FRESULT preset_saveTmpPat()
 		for(uint8_t trk=0; trk<NUM_TRACKS;trk++)
 		{
 				length = seq_patternSet.length[presetNr][trk] ;//seq_patternSet.seq_mainSteps[bar][pat][trk];
-				f_write((FIL*)&SDFile,(const void*)&length,sizeof(uint8_t),&bytesWritten);
+				res = preset_writeExact((FIL*)&SDFile, &length, sizeof(length));
+				if(res != FR_OK) goto writeFailed;
 		}
 
 		//write associated kit nr
-		f_write((FIL*)&SDFile,&seq_patternSet.kitNr[presetNr],sizeof(uint8_t),&bytesWritten);
+		res = preset_writeExact((FIL*)&SDFile, &seq_patternSet.kitNr[presetNr],
+				sizeof(uint8_t));
+		if(res != FR_OK) goto writeFailed;
+		res = preset_writeExact((FIL*)&SDFile,
+				seq_patternSet.seq_conditions[presetNr], SEQ_CONDITION_BYTES);
+		if(res != FR_OK) goto writeFailed;
 
 #endif
 
 	//close the file
-	f_close((FIL*)&SDFile);
+	res = f_close((FIL*)&SDFile);
 
 	//reset the lcd
 //	menu_repaintAll();
@@ -598,6 +652,13 @@ FRESULT preset_saveTmpPat()
 
 #endif
 
+	return res;
+
+writeFailed:
+	f_close((FIL*)&SDFile);
+#if USE_INTERRUPT_ONLY_DURING_SAVE_PROJ
+	HAL_TIM_Base_Stop_IT(&htim2);
+#endif
 	return res;
 }
 
@@ -792,6 +853,7 @@ void preset_init(uint8_t presetNr)
 	{
 		para[i-8] = initKit[i];
 	}
+	kitEngine_migrate(para, END_OF_SOUND_PARAMETERS, NULL, 0);
 
 	//special case mod targets. normalize.
 	const uint8_t nmt=getNumModTargets();
@@ -812,10 +874,11 @@ void preset_init(uint8_t presetNr)
 }
 
 //----------------------------------------------------
-static void preset_writeDrumsetData(uint8_t presetNr, uint8_t isMorph)
+static FRESULT preset_writeDrumsetData(uint8_t presetNr, uint8_t isMorph)
 {
 	uint16_t i;
 	unsigned int bytesWritten;
+	FRESULT res;
 
 	if(isMorph)
 	{
@@ -837,14 +900,17 @@ static void preset_writeDrumsetData(uint8_t presetNr, uint8_t isMorph)
 			{
 				value = preset_getMorphValue(i,activeParameters[PAR_MORPH]);
 			}					
-			f_write((FIL*)&SDFile,&value,1,&bytesWritten);
+			res = f_write((FIL*)&SDFile,&value,1,&bytesWritten);
+			if(res != FR_OK || bytesWritten != 1) return res != FR_OK ? res : FR_DISK_ERR;
 		}
 	} else {
 		for(i=0;i<END_OF_SOUND_PARAMETERS;i++)
 		{
-			f_write((FIL*)&SDFile,&mainParameters[presetNr][i],1,&bytesWritten);
+			res = f_write((FIL*)&SDFile,&mainParameters[presetNr][i],1,&bytesWritten);
+			if(res != FR_OK || bytesWritten != 1) return res != FR_OK ? res : FR_DISK_ERR;
 		}
 	}
+	return FR_OK;
 }
 
 //----------------------------------------------------
@@ -931,27 +997,30 @@ FRESULT preset_saveDrumsetSD(uint8_t presetNr, uint8_t isMorph)
 	//write preset name to file
 
 	res = f_write((FIL*)&SDFile,(void*)savefileNames[presetNr][KIT_NAMES],8,&bytesWritten);
-	if(res != FR_OK) return res;
+	if(res == FR_OK && bytesWritten != 8) res = FR_DISK_ERR;
 	//write the preset data
-	preset_writeDrumsetData(presetNr, isMorph);
+	if(res == FR_OK) res = preset_writeDrumsetData(presetNr, isMorph);
+	if(res == FR_OK) res = preset_writeEngineTag();
 	
 	//close the file
-	f_close((FIL*)&SDFile);
+	const FRESULT closeRes = f_close((FIL*)&SDFile);
+	if(res == FR_OK) res = closeRes;
 
-	return FR_OK;
+	return res;
 #else
 #endif
 };
 
 //----------------------------------------------------
-static void preset_writeGlobalData()
+static FRESULT preset_writeGlobalData()
 {
-	unsigned int bytesWritten;
 	int i;
 	for(i=PAR_BEGINNING_OF_GLOBALS;(i<NUM_PARAMS);i++)
 	{
-		f_write((FIL*)&SDFile,&activeParameters[i],1,&bytesWritten);
+		const FRESULT res = preset_writeExact((FIL*)&SDFile,&activeParameters[i],1);
+		if(res != FR_OK) return res;
 	}
+	return FR_OK;
 }
 
 //----------------------------------------------------
@@ -969,15 +1038,28 @@ FRESULT preset_saveGlobals()
 	//open the file
 	res = f_open((FIL*)&SDFile,"glo.cfg",FA_CREATE_ALWAYS | FA_WRITE);
 	if(res != FR_OK) return res;
-	preset_writeGlobalData();
+	res = preset_writeGlobalData();
 
 	//close the file
-	f_close((FIL*)&SDFile);
+	const FRESULT closeRes = f_close((FIL*)&SDFile);
+	if(res == FR_OK) res = closeRes;
 
 	//f_unmount((TCHAR const*)SDPath);
-	return FR_OK;
+	return res;
 #else
 #endif	
+}
+//----------------------------------------------------
+// Older glo.cfg files are shorter, and older .all files have 0xFF padding where
+// the SysEx globals now live, so fall back to defaults for anything out of range.
+static void preset_sanitizeSysexGlobals(uint8_t forceDefaults)
+{
+	if(forceDefaults || activeParameters[PAR_SYSEX_ENABLE] > 1)
+		activeParameters[PAR_SYSEX_ENABLE] = 1;
+	if(forceDefaults || activeParameters[PAR_SYSEX_DEVICE_ID] < 1 || activeParameters[PAR_SYSEX_DEVICE_ID] > 16)
+		activeParameters[PAR_SYSEX_DEVICE_ID] = 1;
+	if(forceDefaults || activeParameters[PAR_SYSEX_ECHO] > 1)
+		activeParameters[PAR_SYSEX_ECHO] = 0;
 }
 //----------------------------------------------------
 // returns 1 on success
@@ -998,9 +1080,12 @@ static uint8_t preset_readGlobalData()
 	return 1;
 #else
 	const uint8_t numGlobals = NUM_PARAMS - PAR_BEGINNING_OF_GLOBALS;
+	// stock v1.7 files only contain the globals up to PAR_PATTERN_MODE
+	const uint8_t numLegacyGlobals = PAR_SYSEX_ENABLE - PAR_BEGINNING_OF_GLOBALS;
 	f_read((FIL*)&SDFile,&activeParameters[PAR_BEGINNING_OF_GLOBALS],numGlobals,&bytesRead);
-	if(bytesRead != numGlobals)	return 0;
-	else return 1;
+	if(bytesRead < numLegacyGlobals) return 0;
+	preset_sanitizeSysexGlobals(bytesRead < numGlobals);
+	return 1;
 
 #endif
 #endif
@@ -1084,6 +1169,10 @@ void preset_loadDefaultGlobals()
 	activeParameters[PAR_MIDI_CHAN_GLOBAL] = 0; //all
 
 	activeParameters[PAR_PATTERN_MODE] = 1; //auto
+
+	activeParameters[PAR_SYSEX_ENABLE] = 1;
+	activeParameters[PAR_SYSEX_DEVICE_ID] = 1;
+	activeParameters[PAR_SYSEX_ECHO] = 0;
 
 }
 //----------------------------------------------------
@@ -1171,6 +1260,7 @@ static FRESULT preset_readDrumsetData(uint8_t presetNr, uint8_t isMorph)
 		// set to 0 for any that were not read from the file
 		if(END_OF_SOUND_PARAMETERS-bytesRead)
 			memset(para+bytesRead,0,END_OF_SOUND_PARAMETERS-bytesRead);
+		res = preset_readEngineTag(para);
 		
 		//special case mod targets. normalize.
 		const uint8_t nmt=getNumModTargets();
@@ -1593,19 +1683,21 @@ void preset_queryMainStepDataFromSeq(uint16_t stepNr, uint16_t *mainStepData, ui
 };
 
 //----------------------------------------------------
-static void preset_writePatternData(uint8_t patternNr)
+static FRESULT preset_writePatternData(uint8_t patternNr)
 {
 #if 0
 #else
-		UINT bytesWritten;
+		FRESULT res;
 		uint8_t length;
 
 		//---------------  write the step data (note, vol, prob, autom.) ---------------
 		for(uint8_t trk=0; trk<NUM_TRACKS;trk++)
 		{
-			f_write((FIL*)&SDFile,(const void*)&seq_patternSet.seq_subStepPattern[patternNr][trk][0],sizeof(Step)*STEPS_PER_PATTERN,&bytesWritten);
+			res = preset_writeExact((FIL*)&SDFile,(const void*)&seq_patternSet.seq_subStepPattern[patternNr][trk][0],sizeof(Step)*STEPS_PER_PATTERN);
+			if(res != FR_OK) return res;
 
-			f_write((FIL*)&SDFile,(const void*)&seq_patternSet.seq_stepTiming[patternNr][trk][0],sizeof(uint8_t)*STEPS_PER_PATTERN,&bytesWritten);
+			res = preset_writeExact((FIL*)&SDFile,(const void*)&seq_patternSet.seq_stepTiming[patternNr][trk][0],sizeof(uint8_t)*STEPS_PER_PATTERN);
+			if(res != FR_OK) return res;
 		}
 
 		//--------------- now the main step data ---------------
@@ -1614,7 +1706,8 @@ static void preset_writePatternData(uint8_t patternNr)
 			for(uint8_t bar=0;bar<NUM_BARS; bar++)
 			{
 				const uint16_t mainStepData = seq_patternSet.seq_mainSteps[bar][patternNr][trk];
-				f_write((FIL*)&SDFile,(const void*)&mainStepData,sizeof(uint16_t),&bytesWritten);
+				res = preset_writeExact((FIL*)&SDFile,(const void*)&mainStepData,sizeof(uint16_t));
+				if(res != FR_OK) return res;
 			}
 		}
 
@@ -1622,7 +1715,8 @@ static void preset_writePatternData(uint8_t patternNr)
 
 
 		//f_write((FIL*)&SDFile,(const void*)&activeParameters[PAR_SHUFFLE],sizeof(uint8_t),&bytesWritten);
-		f_write((FIL*)&SDFile,(const void*)&seq_patternSet.shuffle[patternNr],sizeof(uint8_t),&bytesWritten);
+		res = preset_writeExact((FIL*)&SDFile,(const void*)&seq_patternSet.shuffle[patternNr],sizeof(uint8_t));
+		if(res != FR_OK) return res;
 
 		//----- pattern/track lengths ------
 		// we reuse the same call from above (when saving main step data)
@@ -1633,12 +1727,15 @@ static void preset_writePatternData(uint8_t patternNr)
 		for(uint8_t trk=0; trk<NUM_TRACKS;trk++)
 		{
 				length = seq_patternSet.length[patternNr][trk] ;//seq_patternSet.seq_mainSteps[bar][pat][trk];
-				f_write((FIL*)&SDFile,(const void*)&length,sizeof(uint8_t),&bytesWritten);
+				res = preset_writeExact((FIL*)&SDFile,(const void*)&length,sizeof(uint8_t));
+				if(res != FR_OK) return res;
 		}
 
 		//write associated kit nr
-		f_write((FIL*)&SDFile,&seq_patternSet.kitNr[patternNr],sizeof(uint8_t),&bytesWritten);
+		res = preset_writeExact((FIL*)&SDFile,&seq_patternSet.kitNr[patternNr],sizeof(uint8_t));
+		if(res != FR_OK) return res;
 
+		return FR_OK;
 #endif
 }
 
@@ -1679,7 +1776,6 @@ FRESULT preset_savePatternSD(uint8_t presetNr)
 {
 
 	FRESULT res;
-	UINT bytesWritten;
 	//lcd_clear();
 	//lcd_home();
 	//lcd_string(PSTR("Saving pattern"));
@@ -1694,18 +1790,20 @@ FRESULT preset_savePatternSD(uint8_t presetNr)
 	if(res != FR_OK) return res;
 
 	//write preset name to file
-	res = f_write((FIL*)&SDFile,(void*)savefileNames[presetNr][PATTERN_NAMES],8,&bytesWritten);
-	if(res != FR_OK) return res;
+	res = preset_writeExact((FIL*)&SDFile,(void*)savefileNames[presetNr][PATTERN_NAMES],8);
 	//write version tag
-	res = f_write((FIL*)&SDFile,"PatV03",6,&bytesWritten);
-	if(res != FR_OK) return res;
+	if(res == FR_OK) res = preset_writeExact((FIL*)&SDFile,"PatV04",6);
 
 	//write pattern data
-	preset_writePatternData(presetNr);
+	if(res == FR_OK) res = preset_writePatternData(presetNr);
+	if(res == FR_OK) res = preset_writeExact((FIL*)&SDFile, seq_patternSet.seq_conditions[presetNr],
+			SEQ_CONDITION_BYTES);
 
 	//close the file
-	f_close((FIL*)&SDFile);
-	
+	const FRESULT closeRes = f_close((FIL*)&SDFile);
+	if(res == FR_OK) res = closeRes;
+	if(res != FR_OK) return res;
+
 	//reset the lcd
 	menu_repaintAll();
 	
@@ -1716,6 +1814,7 @@ FRESULT preset_savePatternSD(uint8_t presetNr)
 // returns 1 on success
 static uint8_t preset_readPatternData(uint8_t patternNr, uint8_t dataVersion)
 {
+	memset(seq_patternSet.seq_conditions[patternNr], 0, SEQ_CONDITION_BYTES);
 
 #if 0
 
@@ -1982,6 +2081,12 @@ static uint8_t preset_readPatternData(uint8_t patternNr, uint8_t dataVersion)
 		if(bytesRead == 0) success = 0;
 
 	}
+	if(success && dataVersion >= 4)
+	{
+		f_read((FIL*)&SDFile, seq_patternSet.seq_conditions[patternNr],
+				SEQ_CONDITION_BYTES, &bytesRead);
+		if(bytesRead != SEQ_CONDITION_BYTES) success = 0;
+	}
 
 	return success;
 #endif
@@ -2165,7 +2270,7 @@ void preset_morph_tick()
 		static MidiMsg msg = {0};
 
 
-		const uint8_t val = interpolate(activeParameters[morph_index],morphParameters[morph_index],morph);
+		const uint8_t val = preset_getMorphValue(morph_index,morph);
 
 
 		if(morph_index < 128)
@@ -2256,6 +2361,8 @@ void preset_morph(uint8_t morph)
 //----------------------------------------------------
 uint8_t preset_getMorphValue(uint16_t index, uint8_t morph)
 {
+	if(index >= PAR_ENGINE_1 && index <= PAR_ENGINE_3)
+		return morph < 128 ? activeParameters[index] : morphParameters[index];
 	return interpolate(activeParameters[index],morphParameters[index],morph);
 };
 //----------------------------------------------------

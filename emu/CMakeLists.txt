@@ -80,10 +80,7 @@ set(FW_SOURCES
     Core/Src/Soundengine/DSPAudio/FX/FxRamBuffer.c
     Core/Src/Soundengine/DSPAudio/FX/Reverb.c
     Core/Src/Soundengine/DSPAudio/FX/Ringmod.c
-    Core/Src/Soundengine/DSPAudio/FX/VerbTools/AllpassDelay.c
-    Core/Src/Soundengine/DSPAudio/FX/VerbTools/sinCos.c
-    Core/Src/Soundengine/DSPAudio/FX/VerbTools/VerbDelay.c
-    Core/Src/Soundengine/DSPAudio/FX/VerbTools/VerbModDelay.c
+    Core/Src/Soundengine/DSPAudio/FX/Freeze.c
     # engine
     Core/Src/Soundengine/FIFO.c
     Core/Src/Soundengine/FxBus.c
@@ -100,7 +97,13 @@ set(FW_SOURCES
     Core/Src/Soundengine/Sequencer/clockSync.c
     Core/Src/Soundengine/Sequencer/EuklidGenerator.c
     Core/Src/Soundengine/Sequencer/sequencer.c
+    Core/Src/Soundengine/Sequencer/SeqCondition.c
     # usb
+    Core/Src/Soundengine/DSPAudio/FeedbackFm.c
+    Core/Src/Soundengine/CpuMeter.c
+    # SysEx: firmware logic, so the emulator can be driven the way a host drives the unit
+    Core/Src/Sysex/SysexCodec.c
+    Core/Src/Sysex/SysexHandler.c
     Core/Src/Soundengine/USB/usb_manager.c
     # FatFs (the SD driver is replaced by emu/hw/sd_emu.c)
     Middlewares/Third_Party/FatFs/src/diskio.c

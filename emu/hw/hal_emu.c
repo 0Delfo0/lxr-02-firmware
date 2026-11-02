@@ -103,6 +103,11 @@ uint32_t HAL_GetTick(void)
 void HAL_Delay(uint32_t ms) { (void)ms; }
 uint32_t HAL_RCC_GetHCLKFreq(void) { return 216000000u; }
 
+/* The HCLK this clock tree produces. CpuMeter.c and Soundengine.c read it to
+   turn cycle counts into percentages; on the device system_stm32f7xx.c defines
+   it, and that file is not built here. Declared in emu/shim/stm32f7xx_hal.h. */
+uint32_t SystemCoreClock = 216000000u;
+
 DWT_Type *emu_dwt(void)
 {
 	/* Each read is worth 1 ms of CPU time, more than any wait in the

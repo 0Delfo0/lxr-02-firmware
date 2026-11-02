@@ -29,10 +29,26 @@ add_library(lxr_platform OBJECT
     Src/delay.c
     Src/flash_if.c
 )
-# Shown on the boot splash screen; comes from project(VERSION) in the top-level CMakeLists.txt.
-set_source_files_properties(Src/main.c PROPERTIES
-    COMPILE_DEFINITIONS "FIRMWARE_VERSION=\" ${PROJECT_VERSION}\""
+# Boot splash screen (Src/main.c:355): name and version come from the top-level CMakeLists.txt, the
+# build id is read from git at build time so that images from different commits differ on the device.
+set(LXR_GENERATED_DIR ${CMAKE_BINARY_DIR}/generated)
+file(MAKE_DIRECTORY ${LXR_GENERATED_DIR})
+add_custom_target(lxr_build_id ALL
+    COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=${CMAKE_SOURCE_DIR} -DOUTPUT=${LXR_GENERATED_DIR}/fw_build.h
+            -P ${CMAKE_SOURCE_DIR}/cmake/tools/build_id.cmake
+    BYPRODUCTS ${LXR_GENERATED_DIR}/fw_build.h
+    COMMENT "Reading the build id from git"
+    VERBATIM
 )
+set_source_files_properties(Src/main.c PROPERTIES
+    COMPILE_DEFINITIONS "FIRMWARE_NAME=\"${LXR_FW_NAME}\";FIRMWARE_VERSION=\"${PROJECT_VERSION}${LXR_FW_SUFFIX}\""
+)
+set_source_files_properties(Src/Sysex/SysexHandler.c PROPERTIES
+    COMPILE_DEFINITIONS "LXR_FW_MAJOR=${PROJECT_VERSION_MAJOR};LXR_FW_MINOR=${PROJECT_VERSION_MINOR};LXR_FW_VERSION_STRING=\"${PROJECT_VERSION}${LXR_FW_SUFFIX}\""
+)
+
+target_include_directories(lxr_platform PRIVATE ${LXR_GENERATED_DIR})
+add_dependencies(lxr_platform lxr_build_id)
 
 # Hardware inputs/outputs: shift-register buttons/LEDs, pots & faders.
 add_library(lxr_io OBJECT
@@ -72,6 +88,7 @@ add_library(lxr_dsp OBJECT
     Src/Soundengine/DSPAudio/distortion.c
     Src/Soundengine/DSPAudio/dither.c
     Src/Soundengine/DSPAudio/DrumVoice.c
+    Src/Soundengine/DSPAudio/FeedbackFm.c
     Src/Soundengine/DSPAudio/HiHat.c
     Src/Soundengine/DSPAudio/lfo.c
     Src/Soundengine/DSPAudio/mixer.c
@@ -93,17 +110,15 @@ add_library(lxr_dsp OBJECT
     Src/Soundengine/DSPAudio/FX/Distortion.c
     Src/Soundengine/DSPAudio/FX/FxRamBuffer.c
     Src/Soundengine/DSPAudio/FX/Reverb.c
+    Src/Soundengine/DSPAudio/FX/Freeze.c
     Src/Soundengine/DSPAudio/FX/Ringmod.c
-    Src/Soundengine/DSPAudio/FX/VerbTools/AllpassDelay.c
-    Src/Soundengine/DSPAudio/FX/VerbTools/sinCos.c
-    Src/Soundengine/DSPAudio/FX/VerbTools/VerbDelay.c
-    Src/Soundengine/DSPAudio/FX/VerbTools/VerbModDelay.c
 )
 
 # Audio engine: codec/I2S DMA, sample block rendering, FX bus, clock/trigger I/O.
 add_library(lxr_engine OBJECT
     Src/Soundengine/AudioCodecManager.c
     Src/Soundengine/cs4344_cs5343.c
+    Src/Soundengine/CpuMeter.c
     Src/Soundengine/FIFO.c
     Src/Soundengine/FxBus.c
     Src/Soundengine/Soundengine.c
@@ -118,12 +133,15 @@ add_library(lxr_midi OBJECT
     Src/Soundengine/MIDI/MidiVoiceControl.c
     Src/Soundengine/MIDI/ParameterArray.c
     Src/Soundengine/MIDI/Uart.c
+    Src/Sysex/SysexCodec.c
+    Src/Sysex/SysexHandler.c
 )
 
 # Step sequencer, Euclidean generator, external clock sync.
 add_library(lxr_sequencer OBJECT
     Src/Soundengine/Sequencer/clockSync.c
     Src/Soundengine/Sequencer/EuklidGenerator.c
+    Src/Soundengine/Sequencer/SeqCondition.c
     Src/Soundengine/Sequencer/sequencer.c
 )
 
@@ -172,7 +190,6 @@ set(LXR_ITCM_SOURCES
     Src/Soundengine/DSPAudio/Snare.c
     Src/Soundengine/DSPAudio/transientGenerator.c
     Src/Soundengine/DSPAudio/FX/Distortion.c
-    Src/Soundengine/DSPAudio/FX/Reverb.c
     Src/Soundengine/MIDI/ParameterArray.c
     Src/Soundengine/Sequencer/sequencer.c
 )

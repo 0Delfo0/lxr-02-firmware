@@ -73,10 +73,18 @@ void DecayEg_setDecay(DecayEg* eg, uint8_t data2)
 //--------------------------------------------------
 IN_ITCM_RAM void DecayEg_setSlope(DecayEg* eg, uint8_t data2)
 {
-	//*1.999f, not *2: at data2 == 127 the factor 2 makes amount exactly 1.0f, so the
-	//division below is by zero and slope becomes +inf, which silences the voice.
-	//slopeEg2_setSlope() has always used 1.999f, capping amount at 0.9995.
-	const float amount 	= ((data2/127.f)-0.5f)*1.999f;
+	/* Only 127 is broken, so only 127 is changed. With the factor 2 the amount at
+	   data2 == 127 is exactly 1.0f, the division below is by zero, slope becomes
+	   +inf and the engine state never recovers from it - see below. Every other
+	   value keeps the stock arithmetic bit for bit, so existing kits sound as
+	   they always did.
+	     0.5f*1.999f is what the stock expression yields at 127 once the division
+	   by zero is taken out: (127/127.f)-0.5f is exactly 0.5f, and 1.999f is the
+	   cap slopeEg2_setSlope() has always used.
+	     The earlier fix here scaled the whole range by 1.999f instead. That also
+	   removed the division by zero, but it moved all 128 values: measured with
+	   test/engine/compare.sh, all 32 rendered kits changed. */
+	const float amount 	= data2 < 127 ? ((data2/127.f)-0.5f)*2 : 0.5f*1.999f;
 	eg->slope 			= 2*amount/(1-amount);
 }
 //--------------------------------------------------
