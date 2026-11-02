@@ -27,11 +27,12 @@ def _load(name):
     return m
 
 
-# PAR_BPM carries the sync mode, and the mode can only be set on the panel:
-# writing it anywhere else does not call seq_setExtSync(). A test that wants
-# the sequencer clocked from the laptop therefore has 1 (`MID`) here on
-# purpose, so a difference on this id is reported and not counted as a failure.
-BY_HAND = {272}
+# Nothing is exempt any more. PAR_BPM used to be, because the manifest said 120
+# while a session needed 1 (`MID`) and only the panel could set it. Since #81
+# measured that a project load does carry the sync mode, the manifest says 1 and
+# the device agrees, so a difference there is a real deviation from the reference
+# state - someone turned pot 1 - and should fail like any other.
+BY_HAND = set()
 
 
 def main(argv=None):
