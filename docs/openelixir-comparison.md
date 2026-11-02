@@ -110,6 +110,78 @@ openelixir instead, branch from `openelixir/main`.
 The clearest PR candidate against openelixir is the incomplete `S-B5` fix: one line,
 `sequencer.c:1611`, with their own commit as the reference for why.
 
+## Where we both fixed it: whose fix is better
+
+Five defects were fixed by both forks. Read side by side rather than assumed (issue #92). Two of the five
+have a verdict that costs us something.
+
+### BL6 / D1, pitch EG slope 127 - **theirs is better, and ours is a sound regression**
+
+| | |
+|---|---|
+| ours | `amount = ((data2/127.f)-0.5f)*1.999f` |
+| theirs (`8ad5946`) | `amount = data2 < 127 ? ((data2/127.f)-0.5f)*2 : 0.5f*1.999f` |
+
+Both stop the division by zero. The difference is what happens to the other 127 values: we changed the
+scale factor for **every** value, so every kit's pitch EG slope is now slightly different from what it was
+on stock firmware, while theirs is **bit-identical for 0 to 126** and special-cases only the value that
+was broken. The error we introduced is small - at `data2 = 64` the amount moves by about 0.05 % - but it
+is on every value and it is unnecessary.
+
+**Action:** adopt their shape. Issue #93.
+
+This is also the clearest argument for porting their `test/engine` harness: a bit-exact A/B render of the
+engine would have failed the moment our version changed a value it did not have to.
+
+### BL1 / M1, the CC and NRPN index - **ours is better, and theirs still has the worse half**
+
+Both bound the `MIDI_CC2` write. Ours keeps a 256-entry array and bounds the write; theirs keeps the
+255-entry array and bounds the write with `paramNr < sizeof(midiParser_originalCcValues)`. Equivalent.
+
+But the defect has two halves, and **their `MIDI_CC` path is untouched**
+(`openelixir/main:Core/Src/Soundengine/MIDI/MidiParser.c:166-169`):
+
+```c
+const uint16_t paramNr = msg.data1-1;
+if(updateOriginalValue && !isFloatModulator) {
+    midiParser_originalCcValues[paramNr+1] = value.itg;
+}
+```
+
+For `msg.data1 == 0` - CC 0, bank select, which DAWs and controllers send routinely - `paramNr`
+underflows to `0xFFFF` and `paramNr+1` promotes to **65536**: a write 64 KB past a 255-byte array. That
+statement is character for character the one our tree carried, and UndefinedBehaviorSanitizer reported it
+on our tree at that line as *"index 65536 out of bounds for type 'uint8_t [255]'"*. We have not run a
+sanitizer on their tree, so this is a reading plus our own sanitizer output for identical code, not a
+direct observation of theirs.
+
+**Action:** report it to them. Issue #94.
+
+### BL2, `empty_directory` - equivalent, ours is slightly more robust
+
+Theirs defines `EMPTY_DIR_PATH_LEN 64` and checks `i + sizeof(fno.fname) > EMPTY_DIR_PATH_LEN`; ours
+passes the buffer size as a parameter and derives it from the buffer with `sizeof`. Both close the
+overflow. Theirs is shorter; ours removes the hidden contract that the caller's buffer must match a
+constant declared next to the function. No action.
+
+### BL5 / U-B1, the global menu rewriting track lengths - identical
+
+Both set `selectButtonMode = SELECT_MODE_MENU` in place of `SEQ_CONFIG`, whose numeric value collided
+with `SELECT_MODE_LAST_STEP_ALL`. Same line, same value, arrived at independently. No action.
+
+### BL3, the save path - **different scope, not better or worse**
+
+Ours checks the result of every write and adds `preset_writeExact()` for the FatFs behaviour of
+reporting a full card as a short write with `FR_OK`. Theirs rewrites the save path so that every write
+goes through `preset_fwrite`/`preset_fcloseWrite`, and in the same commit also fixes P2, P4, P9, P10, P11
+and K-2/P8.
+
+So their commit covers far more ground, but as one 740-line change. Ours covers the defect this issue was
+about and leaves the rest tracked as #65, #69, #73 and #88 to #91. Comparing them as "better" or "worse"
+is the wrong question; the real one is whether our targeted fix covers the cases theirs does, and the
+answer is that it covers the write-result case and not the other six, which is why those six now have
+issues. No action beyond those.
+
 ## What this changes about our plan
 
 1. **#1's "fixed by nobody" was wrong**, and that mattered: it was one of the two items picked as best
