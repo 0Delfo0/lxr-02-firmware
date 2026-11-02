@@ -241,6 +241,14 @@ static inline void NVIC_SystemReset(void) { }
 
 void Error_Handler(void);
 
+
+/* The CPU meter turns cycle counts into percentages with this
+   (Soundengine.c:44, CpuMeter.c). On the device system_stm32f7xx.c defines it
+   and SystemCoreClockUpdate() keeps it current; here it is the constant this
+   clock tree produces, defined in emu/hw/hal_emu.c beside
+   HAL_RCC_GetHCLKFreq(), which already returns the same 216 MHz. */
+extern uint32_t SystemCoreClock;
+
 #ifdef __cplusplus
 }
 #endif

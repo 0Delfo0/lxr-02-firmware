@@ -48,15 +48,33 @@ typedef struct ImageFileHeaderStruct
 #include "Soundengine/DSPAudio/random.h"
 #include "Soundengine/USB/usb_manager.h"
 #include "Soundengine/MIDI/Uart.h"
+#include "Sysex/SysexHandler.h"
 
 /* Private typedef -----------------------------------------------------------*/
 
 
 /* Private define ------------------------------------------------------------*/
-// The CMake build passes FIRMWARE_VERSION from project(VERSION); this is the fallback for STM32CubeIDE.
-#ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION " 2.00"
+// The CMake build passes the name and version from the top-level CMakeLists.txt and generates
+// fw_build.h with the commit the image was built from; these are the fallbacks for STM32CubeIDE,
+// which builds neither.
+#if defined(__has_include)
+#  if __has_include("fw_build.h")
+#    include "fw_build.h"
+#  endif
 #endif
+#ifndef FIRMWARE_NAME
+#define FIRMWARE_NAME "VITRIOL"
+#endif
+#ifndef FIRMWARE_VERSION
+#define FIRMWARE_VERSION "2.00"
+#endif
+#ifndef FIRMWARE_BUILD
+#define FIRMWARE_BUILD "local"
+#endif
+// The LCD has 16 columns; a name or a build id that does not fit would be truncated on the
+// start-up screen, which is where the GPL-3 7(c) marking of a modified version lives.
+_Static_assert(sizeof(FIRMWARE_NAME " " FIRMWARE_VERSION) <= 17, "boot screen line 1 is too long");
+_Static_assert(sizeof("LXR-02 " FIRMWARE_BUILD) <= 17, "boot screen line 2 is too long");
 //#define f_unmount(path) f_mount(0, path, 0)
 
 /* Private macro -------------------------------------------------------------*/
@@ -350,12 +368,14 @@ int main(void)
 
 #else
 	//print boot up message
+//16 characters per line, 2 lines: the name and version first, then the commit this image
+//was built from, which is the only thing that tells two test builds apart on the device.
+//"LXR-02" names the hardware this firmware is for, nothing more (NOTICE.md, GPL-3 7(e)).
 lcd_clear();
-lcd_string("Sonic Potions");
+lcd_string(FIRMWARE_NAME " " FIRMWARE_VERSION);
 //goto 2nd line
 lcd_setcursor(0,2);
-lcd_string("LXR2 Drums V");
-lcd_string(FIRMWARE_VERSION);
+lcd_string("LXR-02 " FIRMWARE_BUILD);
 #endif
 
 lcd_showSplash();
@@ -915,6 +935,8 @@ lcd_process_display_interrupt = 1;
 
   HAL_NVIC_SetPriority(EXTI9_5_IRQn, 3, 0);
   HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
+
+  sysex_init();
   while (1)
   {
   checkMainLoc = -14;
@@ -964,6 +986,7 @@ lcd_process_display_interrupt = 1;
 	  soundengine_process();
 	//  menu_tick();
 	  screensaver_check();
+	  menu_cpuMeterTick();
 	//  menu_tick();
   checkMainLoc = -10;
 
@@ -987,6 +1010,9 @@ lcd_process_display_interrupt = 1;
 
 		//process midi on midi port
 			uart_processMidi();
+
+	  //SysEx requests, replies and parameter echo
+	  sysex_tick();
 
 	  //check if we have to save something
 	  preset_processTimer();

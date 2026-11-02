@@ -22,3 +22,20 @@ uint8_t CDC_Transmit_FS(uint8_t *Buf, uint16_t Len)
 	(void)Buf; (void)Len;
 	return 0;
 }
+
+/* The USB device stack stand-ins declared in emu/shim/usbd_cdc.h. The emulator
+ * is always "configured" with a class attached, so usb_isConnected() and the
+ * TxState check in usb_manager.c behave as they do on a connected device. */
+USBD_CDC_HandleTypeDef emu_cdc_handle;
+USBD_HandleTypeDef hUsbDeviceFS = { USBD_STATE_CONFIGURED, &emu_cdc_handle };
+USBD_HandleTypeDef USB_OTG_dev  = { USBD_STATE_CONFIGURED, &emu_cdc_handle };
+int FS_Desc, USBD_CDC, USBD_Interface_fops_FS, MIDI_cb;
+
+USBD_StatusTypeDef USBD_Init(USBD_HandleTypeDef *h, void *desc, uint8_t id)
+{ (void)h; (void)desc; (void)id; return USBD_OK; }
+USBD_StatusTypeDef USBD_DeInit(USBD_HandleTypeDef *h) { (void)h; return USBD_OK; }
+USBD_StatusTypeDef USBD_RegisterClass(USBD_HandleTypeDef *h, void *cls)
+{ (void)h; (void)cls; return USBD_OK; }
+USBD_StatusTypeDef USBD_CDC_RegisterInterface(USBD_HandleTypeDef *h, void *fops)
+{ (void)h; (void)fops; return USBD_OK; }
+USBD_StatusTypeDef USBD_Start(USBD_HandleTypeDef *h) { (void)h; return USBD_OK; }

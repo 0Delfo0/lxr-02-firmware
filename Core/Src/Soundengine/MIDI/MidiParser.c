@@ -29,16 +29,17 @@
 #include "Soundengine/USB/usb_manager.h"
 #include "menu/menu.h"
 #include "Soundengine/FxBus.h"
+#include "Sysex/SysexHandler.h"
 
 #include "Soundengine/MIDI/MidiMessages.h"
 
 static uint16_t midiParser_activeNrpnNumber = 0;
 
-/* Indexed by a flat parameter number: msg.data1 (0-255) on the MIDI_CC path,
-   msg.data1 + 128 (128-383) on the MIDI_CC2 path, and read back with the same
-   numbering by autoNode_setDestination() in automationNode.c. It used to be
-   declared [0xff], 255 entries, so every CC2 parameter above 126 wrote outside
-   it - the documented mute NRPNs 200-206 landed 73 to 79 bytes past the end. */
+/* Indexed by a flat parameter number: msg.data1 (0-127) on the MIDI_CC path,
+   msg.data1 + 128 on the MIDI_CC2 path, and read back with the same numbering
+   by autoNode_setDestination() in automationNode.c. It used to be declared
+   [0xff], 255 entries, so CC 0 wrote at 65536 and the CC2 path wrote past the
+   end - the mute NRPNs 200-206 landed 73 to 79 bytes beyond it. */
 uint8_t midiParser_originalCcValues[MIDI_ORIGINAL_CC_VALUE_COUNT];
 
 // this will be set to some value if we are ignoring all mtc messages until the next 0 message
@@ -136,8 +137,16 @@ float midiParser_calcDetune(uint8_t value)
 	return cent;
 }
 //-----------------------------------------------------------
+// NRPN numbers past the CC2 parameter range (data1 is 8 bit)
+#define NRPN_FX_FREEZE	210	// freeze FX engage: 0 = release, 1..8 = rate, 9..127 = P1 rate
+
 static void midiParser_nrpnHandler(uint16_t value)
 {
+	if(midiParser_activeNrpnNumber == NRPN_FX_FREEZE)
+	{
+		FxBus_freezeControl((uint8_t)value);
+		return;
+	}
 	MidiMsg msg2;
 	msg2.status = MIDI_CC2;
 	msg2.data1 = midiParser_activeNrpnNumber;
@@ -915,7 +924,14 @@ void midiParser_ccHandler(MidiMsg msg, uint8_t updateOriginalValue, uint8_t isFl
 	{
 		const uint16_t paramNr = msg.data1 + 1 + 127;
 
-		if(updateOriginalValue && !isFloatModulator) {
+		/* paramNr runs to 383: midiParser_nrpnHandler() assigns a uint16_t
+		   NRPN number into msg.data1, which is 8 bit, so CC2_MUTE_1..7
+		   (NRPN 200-206) arrive as data1 200-206 and index 328-334. Nothing
+		   reads those entries - the only reader indexes by Step.param1Nr,
+		   a uint8_t - so bound the write instead of sizing the array for
+		   indices that are write only. */
+		if(updateOriginalValue && !isFloatModulator
+				&& paramNr < MIDI_ORIGINAL_CC_VALUE_COUNT) {
 			midiParser_originalCcValues[paramNr] = value.itg;
 		}
 		switch(msg.data1)
@@ -1325,19 +1341,22 @@ void midiParser_ccHandler(MidiMsg msg, uint8_t updateOriginalValue, uint8_t isFl
 				mixer_audioRouting[msg.data1-CC2_AUDIO_OUT1] = value.itg;
 				break;
 
-				/*
-			case CC2_MIDI_NOTE1:
-			case CC2_MIDI_NOTE2:
-			case CC2_MIDI_NOTE3:
-			case CC2_MIDI_NOTE4:
-			case CC2_MIDI_NOTE5:
-			case CC2_MIDI_NOTE6:
-			case CC2_MIDI_NOTE7:
-				// set the note override for the voice. 0 means use the note value, anything else means
-				// that the note will always play with that note
-				//midi_NoteOverride[msg.data1-CC2_MIDI_NOTE1] = value.itg;
+			case CC2_ENGINE_1:
+			case CC2_ENGINE_2:
+			case CC2_ENGINE_3:
+			{
+				DrumVoice *v = &voiceArray[msg.data1-CC2_ENGINE_1];
+				const uint8_t engine = isFloatModulator ? (value.flt >= .5f) :
+					(value.itg == DRUM_ENGINE_FEEDBACK_FM);
+				if(v->engine != engine) feedbackFm_trigger(&v->feedbackFm);
+				v->engine = engine;
 				break;
-				*/
+			}
+			case CC2_TIMBRE_DECAY_1:
+			case CC2_TIMBRE_DECAY_2:
+			case CC2_TIMBRE_DECAY_3:
+				feedbackFm_setDecay(&voiceArray[msg.data1-CC2_TIMBRE_DECAY_1].feedbackFm, value.flt);
+				break;
 
 			case CC2_MUTE_1:
 			case CC2_MUTE_2:
@@ -1431,7 +1450,9 @@ void midiParser_ccHandler(MidiMsg msg, uint8_t updateOriginalValue, uint8_t isFl
 				break;
 
 			case CC2_FX_REVERB_TYPE:
-
+#if USE_REVERB
+				Reverb_setType(&fxBus.reverb, value.itg);
+#endif
 				break;
 
 			case CC2_FX_DELAY_TYPE:
@@ -1520,21 +1541,24 @@ static void midiParser_noteOn(uint8_t voice, uint8_t note, uint8_t vel, uint8_t 
 
 		voiceControl_noteOn(voice,note,vel);
 
-		//Recording Mode - record the note to sequencer and echo to channel of that voice
-		// (we'd want to hear what's being recorded)
+		/* Echo the played note to the outputs. This used to happen inside
+		   voiceControl_noteOn(), which sent the raw note with no note off before
+		   it; it is here now so that each caller sends exactly one note on, with
+		   the note number that belongs on the wire, after releasing whatever was
+		   still sounding on that channel - the same order seq_triggerVoice()
+		   uses. Previously the note off was sent only while recording, so a
+		   played note could hang on the receiving instrument.
+		     todo a user played note will end up being turned off if a pattern
+		     switch happens. To fix this we'd have to differentiate between a user
+		     played note and a note triggered from the sequencer, and also
+		     recognize note off on a user played note and send it. */
+		const uint8_t chan=midi_MidiChannels[voice];
+		seq_midiNoteOff(chan);
+		seq_sendMidiNoteOn(chan, note, vel);
+
+		//Recording Mode - record the note to sequencer
 		if(do_rec) {
-			const uint8_t chan=midi_MidiChannels[voice];
-
-			// record note if rec is on
 			seq_addNote(voice,vel, note);
-
-			//if a note is on for that channel send note-off first
-			seq_midiNoteOff(chan);
-			//send the new note to midi/usb out
-			// todo a user played note will end up being turned off if a pattern switch happens.
-			//           to fix this we'd have to differentiate between a user played note and a
-			//           note triggered from sequencer, and also recognize note off on user played note and send it.
-			seq_sendMidiNoteOn(chan, note, vel);
 		}
 
 	}
@@ -1720,6 +1744,11 @@ uint8_t midiParser_cc2voiceNr(uint8_t cc)
 }
 
 //-----------------------------------------------------------
+uint8_t midiParser_isUsb2MidiRouted(void)
+{
+	return midiParser_routing.route.usb2midi;
+}
+//-----------------------------------------------------------
 /** Parse incoming midi messages and invoke corresponding action
  */
 void midiParser_parseMidiMessage(MidiMsg msg)
@@ -1743,8 +1772,11 @@ void midiParser_parseMidiMessage(MidiMsg msg)
 		}
 	}
 
+	if(msg.bits.source==midiSourceMIDI)
+		sysex_rxDinMessage(msg.status, msg.bits.sysxbyte);
+
 	if(msg.bits.sysxbyte)
-		return; // no further action needed. we don't interpret sysex data right now
+		return; // SysEx data is handled by SysexHandler
 
 	// FILT filter messages here. Filter inline below to be more optimal
 	// we are interested in the low nibble since we are Rx here
@@ -1905,8 +1937,14 @@ void midiParser_parseMidiMessage(MidiMsg msg)
 			else
 			{
 
-				// respond to CC message. This responds only when global channel or voice channel matches the cc message's channel
-				if((midiParser_txRxFilter & MIDI_FILTER_CC) && ((chanonly == midi_MidiChannels[voiceNr]) || (chanonly == midi_MidiChannels[7]) )) {
+				/* respond to CC message. This responds only when global channel or voice channel matches the cc message's channel
+				   voiceNr-1: midiParser_cc2voiceNr() counts voices from 1 and
+				   reserves 0 for "no voice" and 7 for "all voices" (CC 115),
+				   while midi_MidiChannels is 0-based with element 7 the global
+				   channel. Indexing it by voiceNr therefore read the NEXT
+				   voice's channel, so every voice's CCs answered on its
+				   neighbour's channel. */
+				if((midiParser_txRxFilter & MIDI_FILTER_CC) && ((chanonly == midi_MidiChannels[voiceNr-1]) || (chanonly == midi_MidiChannels[7]) )) {
 					//record automation if record is turned on
 					seq_recordAutomation(frontParser_activeTrack, msg.data1, msg.data2);
 

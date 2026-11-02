@@ -200,6 +200,8 @@ enum NamesEnum
 	TEXT_ROTATION,
 	TEXT_STEP_FLAM,
 	TEXT_STEP_SHIFT,
+	TEXT_STEP_CONDITION,
+	TEXT_BEAT_REPEAT,
 	
 	//Global Parameters
 	TEXT_BPM,
@@ -265,11 +267,25 @@ enum NamesEnum
 	TEXT_FX_TIME,
 	TEXT_FX_PREDELAY,
 	TEXT_FX_REFLECTION,
+	TEXT_FX_LENGTH,
+	TEXT_FX_PITCH,
+	TEXT_FX_GATE,
 	TEXT_FX_P1,
 	TEXT_FX_P2,
 	TEXT_FX_P3,
 	TEXT_FX_P4,
 	TEXT_PATTERN_MODE,
+	TEXT_SYSEX_ENABLE,
+	TEXT_SYSEX_DEVICE_ID,
+	TEXT_SYSEX_ECHO,
+	TEXT_CPU_NOW,		// read-only CPU meter entries, see docs/performance.md
+	TEXT_CPU_PEAK,
+	TEXT_CPU_VOICES,
+	TEXT_CPU_MIXER,
+	TEXT_CPU_FX,
+	TEXT_CPU_XRUNS,
+	TEXT_DRUM_ENGINE,
+	TEXT_TIMBRE_DECAY,
 
 
 	NUM_NAMES
@@ -373,14 +389,28 @@ enum shortNamesEnum
 	SHORT_TIME,
 	SHORT_PRE,
 	SHORT_REF,
+	SHORT_PITCH,
+	SHORT_GATE,
 	SHORT_P1,
 	SHORT_P2,
 	SHORT_P3,
 	SHORT_P4,
 	SHORT_KCM,
 	SHORT_FLAM,
-	SHORT_SHIFT
-
+	SHORT_SHIFT,
+	SHORT_SYSEX,
+	SHORT_DEVICE_ID,
+	SHORT_ECHO,
+	SHORT_CPU,
+	SHORT_PEAK,
+	SHORT_VOICES,
+	SHORT_MIXER,
+	SHORT_FX,
+	SHORT_XRUNS,
+	SHORT_ENGINE,
+	SHORT_TIMBRE_DECAY,
+	SHORT_CONDITION,
+	SHORT_BEAT_REPEAT
 	
 };
 //-----------------------------------------------------------------
@@ -415,7 +445,8 @@ enum catNamesEnum
 	CAT_GENERATOR,
 	CAT_MIDI,
 	CAT_CLOCK,
-	CAT_FX
+	CAT_FX,
+	CAT_CPU
 };
 //-----------------------------------------------------------------
 // these must correspond with longNames in MenuText.h
@@ -502,13 +533,28 @@ enum longNamesEnum
 	LONG_TIME,
 	LONG_PREDELAY,
 	LONG_REFLECTION,
+	LONG_PITCH,
+	LONG_GATE,
 	LONG_P1,
 	LONG_P2,
 	LONG_P3,
 	LONG_P4,
 	LONG_PATTERN_MODE,
 	LONG_FLAM,
-	LONG_SHIFT
+	LONG_SHIFT,
+	LONG_SYSEX,
+	LONG_DEVICE_ID,
+	LONG_ECHO,
+	LONG_CPU_NOW,
+	LONG_CPU_PEAK,
+	LONG_VOICES,
+	LONG_MIXER,
+	LONG_FX,
+	LONG_XRUNS,
+	LONG_ENGINE,
+	LONG_TIMBRE_DECAY,
+	LONG_CONDITION,
+	LONG_BEAT_REPEAT
 	
 };
 
@@ -649,6 +695,8 @@ void menu_repaintAll();
 //-----------------------------------------------------------------
 //repaint the screen. show all changes*/
 void menu_repaint();
+//refresh the read-only CPU meter page while it is shown, call from the main loop
+void menu_cpuMeterTick();
 //-----------------------------------------------------------------
 //For nonblocking display refreshs
 void menu_tick();
@@ -682,6 +730,11 @@ uint8_t menu_getDisplayParameterType(uint8_t pos);
 uint8_t menu_parseKnobValue(uint8_t potNr, int16_t diff);
 //-----------------------------------------------------------------
 void menu_parseGlobalParam(uint16_t paramNr, uint8_t value);
+uint8_t menu_clampParamValue(uint16_t paramNr, uint16_t value);
+// loads a kit from the RAM kit table into the edit buffer, like the load page
+void menu_loadKit(uint8_t kitNr);
+// call after activeParameters was replaced from outside the menu
+void menu_editBufferReplaced(void);
 //-----------------------------------------------------------------
 /** all parameters are send to the cortex soundchip. called after loading a preset into the avr ram*/
 void menu_sendAllParameters();

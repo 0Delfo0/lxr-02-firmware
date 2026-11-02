@@ -51,11 +51,16 @@ void voiceControl_noteOn(uint8_t voice, uint8_t note, uint8_t vel)
 	}
 	*/
 
-	if (active_voices & (1<<voice))
-	{
-    uint8_t midiChan = midi_MidiChannels[voice];
-		seq_sendMidiNoteOn(midiChan, note, vel);
-	}
+	/* No MIDI note is sent from here. The test above was always true - the bit
+	   is set at the top of this function - so every hit produced a note on from
+	   here AND one from the caller, with only one note off to match, leaving the
+	   receiving instrument with a note hanging. Worse, the two carried different
+	   note numbers whenever a voice has a note override set
+	   (PAR_MIDI_NOTE1 + voice, non-zero): the caller sends the override, this
+	   sent the raw note.
+	     Both callers now send it themselves - seq_triggerVoice() in sequencer.c
+	   and midiParser_noteOn() in MidiParser.c - because only they know which
+	   note number belongs on the wire. */
 
 	// Send to front panel so it can pulse the LED
 	uart_sendFrontpanelByte(NOTE_ON);

@@ -54,6 +54,37 @@ volatile struct {
 } buttonHandler_stateMemory;
 
 static uint8_t buttonHandler_mutedVoices = 0;
+// perf mode steps 9..16 held for the freeze FX (bit 0 = step 9)
+static uint8_t buttonHandler_freezeHeld = 0;
+static uint8_t buttonHandler_beatRepeatHeld = 0;
+
+// steps 9..16 engage the freeze at 1/4, 1/4T, 1/8, 1/8T, 1/16, 1/16T, 1/32, 1/32T
+static void buttonHandler_freezePressed(uint8_t seqButtonPressed, uint8_t ledNr)
+{
+	if(FxBus_freezeControl(seqButtonPressed - 8 + 1))
+	{
+		buttonHandler_freezeHeld |= (uint8_t)(1 << (seqButtonPressed - 8));
+		led_setValue(1, ledNr);
+	}
+}
+
+// Back to the rate of a step still held, released with the last one. Handles
+// the release in any mode (with shift, load/save, after a mode change): the
+// freeze lasts exactly as long as the button is held. Returns 1 if consumed.
+static uint8_t buttonHandler_freezeReleased(uint8_t seqButtonPressed, uint8_t ledNr)
+{
+	if(seqButtonPressed < 8 || !(buttonHandler_freezeHeld & (1 << (seqButtonPressed - 8))))
+		return 0;
+	if(buttonHandler_stateMemory.selectButtonMode == SELECT_MODE_PERF)
+		led_setValue(0, ledNr);
+	buttonHandler_freezeHeld &= (uint8_t)~(1 << (seqButtonPressed - 8));
+	uint8_t value = 0;
+	for(uint8_t i = 0; i < 8; i++)
+		if(buttonHandler_freezeHeld & (1 << i))
+			value = i + 1;
+	FxBus_freezeControl(value);
+	return 1;
+}
 volatile static int8_t buttonHandler_armedAutomationStep = NO_STEP_SELECTED;
 
 #define ARM_AUTOMATION		0x40
@@ -1210,14 +1241,20 @@ static void buttonHandler_seqButtonPressed(uint8_t seqButtonPressed)
 			break;
 
 
-		case SELECT_MODE_PERF: //--- buttons 1-8 initiate a manual roll
-			if (seqButtonPressed < 8) {
+		case SELECT_MODE_PERF: // buttons 1-7 roll, 8 repeats, 9-16 control freeze
+			if (seqButtonPressed < 7) {
 				//turn roll on
 				frontPanel_sendData(SEQ_CC, SEQ_ROLL_ON_OFF,
 						(uint8_t) ((seqButtonPressed & 0xf) + 0x10));
 				//turn button led on
 				led_setValue(1, ledNr);
+			} else if(seqButtonPressed == 7) {
+				frontPanel_sendData(SEQ_CC, SEQ_BEAT_REPEAT,
+						(uint8_t)(activeParameters[PAR_PATTERN_NEXT] + 1u));
+				buttonHandler_beatRepeatHeld = 1;
+				led_setValue(1, ledNr);
 			} else {
+				buttonHandler_freezePressed(seqButtonPressed, ledNr);
 				/*
 				 //moved pattern select to select buttons
 				 //pattern
@@ -1290,6 +1327,17 @@ static void buttonHandler_seqButtonReleased(uint8_t seqButtonPressed)
 
 	uint8_t ledNr = led_idx2StepLed(seqButtonPressed);
 
+	if(buttonHandler_freezeReleased(seqButtonPressed, ledNr))
+		return;
+	if(seqButtonPressed == 7 && buttonHandler_beatRepeatHeld)
+	{
+		frontPanel_sendData(SEQ_CC, SEQ_BEAT_REPEAT, 0);
+		buttonHandler_beatRepeatHeld = 0;
+		if(buttonHandler_stateMemory.selectButtonMode == SELECT_MODE_PERF)
+			led_setValue(0, ledNr);
+		return;
+	}
+
 	if(buttonHandler_stateMemory.selectButtonMode == SEQ_LAST_STEP)
 	{
 
@@ -1304,7 +1352,7 @@ static void buttonHandler_seqButtonReleased(uint8_t seqButtonPressed)
 
 			//always check seq buttons to turn off any active rolls
 		case SELECT_MODE_PERF:
-			if (seqButtonPressed < 8) {
+			if (seqButtonPressed < 7) {
 				//turn roll off
 				frontPanel_sendData(SEQ_CC, SEQ_ROLL_ON_OFF, (seqButtonPressed & 0xf));
 				//turn button led off
@@ -1348,7 +1396,7 @@ static void buttonHandler_seqButtonReleased(uint8_t seqButtonPressed)
 
 		break;
 	case SELECT_MODE_PERF:
-		if (seqButtonPressed < 8) {
+		if (seqButtonPressed < 7) {
 			//turn roll off
 			frontPanel_sendData(SEQ_CC, SEQ_ROLL_ON_OFF, (seqButtonPressed & 0xf));
 			//turn button led off

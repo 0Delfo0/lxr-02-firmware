@@ -24,6 +24,8 @@
 void midiParser_parseUartData(unsigned char data);
 void midiParser_ccHandler(MidiMsg msg, uint8_t updateOriginalValue, uint8_t isFloatModulator, float v);
 void midiParser_parseMidiMessage(volatile MidiMsg msg);
+// 1 when incoming USB MIDI is forwarded to the DIN output
+uint8_t midiParser_isUsb2MidiRouted(void);
 float midiParser_calcDetune(uint8_t value);
 // check mtc status, might stop the sequencer
 void midiParser_checkMtc();
@@ -50,9 +52,21 @@ void midiParser_setFilter(uint8_t is_tx, uint8_t value);
 
 // a place to store all the incoming CC values
 //needed to know to which value the automation node should return
-/* 384 = the whole index space the parser and automationNode.c use:
-   0-255 for MIDI_CC and 128-383 for MIDI_CC2 (msg.data1 + 128). */
-#define MIDI_ORIGINAL_CC_VALUE_COUNT 384
+/* 256 covers every index that is ever READ back:
+     - autoNode_setDestination() reads [node->destination], and destination is
+       assigned from Step.param1Nr (SeqStep.h), a uint8_t, so it cannot exceed
+       255 even from a corrupt .PAT file. It is the only reader.
+     - MIDI_CC writes [msg.data1], 0-127.
+     - MIDI_CC2 writes [msg.data1 + 128]. data1 is 8 bit there, because
+       midiParser_nrpnHandler() truncates a uint16_t NRPN number into it, so
+       that index runs to 383 - past this array on purpose. Those entries have
+       no automation destination that could ask for them (a destination d > 127
+       arrives as data1 = d - 128 and so writes [d], which is <= 255), so the
+       write is bounded in midiParser_ccHandler() rather than carrying 128
+       bytes nothing reads.
+   The old 255 was one short of the readable range, and CC 0 used to land at
+   65536 because paramNr underflowed. */
+#define MIDI_ORIGINAL_CC_VALUE_COUNT 256
 extern uint8_t midiParser_originalCcValues[MIDI_ORIGINAL_CC_VALUE_COUNT];
 
 
