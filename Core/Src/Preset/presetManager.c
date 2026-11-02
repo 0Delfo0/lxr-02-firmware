@@ -105,6 +105,7 @@ static void preset_makeFileNameSave(char *buf, uint8_t num, uint8_t type, char *
 static FRESULT preset_fopenWrite(FIL *file, const char *path);
 static FRESULT preset_fwrite(FIL *file, const void *data, UINT size);
 static FRESULT preset_fcloseWrite(FIL *file);
+static FRESULT preset_abortSdOperation(FRESULT res);
 
 //static void preset_makeFileNameTemp(char *buf, uint8_t num, uint8_t type);
 
@@ -177,27 +178,13 @@ FRESULT loadTmpFolderFiles()
 		if ((res != FR_OK) && (res != FR_NO_FILE))
 		{
 			f_close((FIL*)&SDFile);
-			lcd_process_display_interrupt = 1;
-			preset_initTmpFolder();
-#if USE_INTERRUPT_ONLY_DURING_SAVE_PROJ
-			HAL_TIM_Base_Stop_IT(&htim2);	//calc sample interrupt - prio 1
-#else
-
-#endif
-			return res;
+			return preset_abortSdOperation(res);
 		}
 		res = preset_loadSongSD(i);
 		if ((res != FR_OK) && (res != FR_NO_FILE))
 		{
 			f_close((FIL*)&SDFile);
-			lcd_process_display_interrupt = 1;
-			preset_initTmpFolder();
-#if USE_INTERRUPT_ONLY_DURING_SAVE_PROJ
-			HAL_TIM_Base_Stop_IT(&htim2);	//calc sample interrupt - prio 1
-#else
-
-#endif
-			return res;
+			return preset_abortSdOperation(res);
 		}
 	}
 
@@ -2440,6 +2427,22 @@ FRESULT preset_createProject(uint8_t presetNr)
 // save all settings (global, pattern, kit)
 // or save performance settings (pattern, kit)
 
+/* Every failure path of a project load or save ends the same way: give the
+   display back, put the /tmp working copy back and, when the audio interrupt was
+   turned on for the operation, turn it off again. There were eight textually
+   identical copies of this - which is why the globals save had no check at all,
+   since adding one meant a ninth. The name says "SD operation" rather than
+   "save" because the load paths use the same clean-up. */
+static FRESULT preset_abortSdOperation(FRESULT res)
+{
+	lcd_process_display_interrupt = 1;
+	preset_initTmpFolder();
+#if USE_INTERRUPT_ONLY_DURING_SAVE_PROJ
+	HAL_TIM_Base_Stop_IT(&htim2);	//calc sample interrupt - prio 1
+#endif
+	return res;
+}
+
 FRESULT preset_saveProject(uint8_t presetNr)
 {
 	FRESULT res;
@@ -2568,7 +2571,12 @@ FRESULT preset_saveProject(uint8_t presetNr)
 
 //	soundengine_process();
 	//save globals
-	preset_saveGlobals();
+	/* The result used to be thrown away, so a globals write that failed - a full
+	   card, most likely - left the project with a glo.cfg that is short or
+	   missing and reported success (#69). */
+	res = preset_saveGlobals();
+	if(res != FR_OK)
+		return preset_abortSdOperation(res);
 	//save all drumkits, patterns and songs
 	for(uint8_t i=0;i<NUM_KIT_SLOTS;i++)
 	{
@@ -2591,26 +2599,12 @@ FRESULT preset_saveProject(uint8_t presetNr)
 	//	soundengine_process();
 		res = preset_savePatternSD(i);
 		if(res != FR_OK) {
-			lcd_process_display_interrupt = 1;
-			preset_initTmpFolder();
-#if USE_INTERRUPT_ONLY_DURING_SAVE_PROJ
-			HAL_TIM_Base_Stop_IT(&htim2);	//calc sample interrupt - prio 1
-#else
-
-#endif
-			return res;
+			return preset_abortSdOperation(res);
 		}
 	//	soundengine_process();
 		res = preset_saveSongSD(i);
 		if(res != FR_OK) {
-			lcd_process_display_interrupt = 1;
-			preset_initTmpFolder();
-#if USE_INTERRUPT_ONLY_DURING_SAVE_PROJ
-			HAL_TIM_Base_Stop_IT(&htim2);	//calc sample interrupt - prio 1
-#else
-
-#endif
-			return res;
+			return preset_abortSdOperation(res);
 		}
 	}
 
@@ -2869,14 +2863,7 @@ FRESULT preset_loadProject(uint8_t presetNr, uint8_t clearTmp)
 		}
 		else
 		{
-			lcd_process_display_interrupt = 1;
-			preset_initTmpFolder();
-#if USE_INTERRUPT_ONLY_DURING_SAVE_PROJ
-			HAL_TIM_Base_Stop_IT(&htim2);	//calc sample interrupt - prio 1
-#else
-
-#endif
-			return res;
+			return preset_abortSdOperation(res);
 		}
 	}
 	else
@@ -2884,14 +2871,7 @@ FRESULT preset_loadProject(uint8_t presetNr, uint8_t clearTmp)
 		res = f_chdir(currentFolder);
 		if (res != FR_OK)
 		{
-			lcd_process_display_interrupt = 1;
-			preset_initTmpFolder();
-#if USE_INTERRUPT_ONLY_DURING_SAVE_PROJ
-			HAL_TIM_Base_Stop_IT(&htim2);	//calc sample interrupt - prio 1
-#else
-
-#endif
-			return res;
+			return preset_abortSdOperation(res);
 		}
 	}
 	//load data
@@ -2981,27 +2961,13 @@ FRESULT preset_loadProject(uint8_t presetNr, uint8_t clearTmp)
 		if ((res != FR_OK) && (res != FR_NO_FILE))
 		{
 			f_close((FIL*)&SDFile);
-			lcd_process_display_interrupt = 1;
-			preset_initTmpFolder();
-#if USE_INTERRUPT_ONLY_DURING_SAVE_PROJ
-			HAL_TIM_Base_Stop_IT(&htim2);	//calc sample interrupt - prio 1
-#else
-
-#endif
-			return res;
+			return preset_abortSdOperation(res);
 		}
 		res = preset_loadSongSD(i);
 		if ((res != FR_OK) && (res != FR_NO_FILE))
 		{
 			f_close((FIL*)&SDFile);
-			lcd_process_display_interrupt = 1;
-			preset_initTmpFolder();
-#if USE_INTERRUPT_ONLY_DURING_SAVE_PROJ
-			HAL_TIM_Base_Stop_IT(&htim2);	//calc sample interrupt - prio 1
-#else
-
-#endif
-			return res;
+			return preset_abortSdOperation(res);
 		}
 	}
 
