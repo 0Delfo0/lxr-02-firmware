@@ -109,6 +109,11 @@ void frontPanel_ccHandler()
 	DISABLE_SIGN_WARNING
 	if(parNr == 255/*PAR_BANK_CHANGE*/)
 	{
+		//A CC value is 0-127 and there are NUM_KIT_SLOTS kits. A higher value used
+		//to be loaded anyway, reading past mainParameters into the edit buffer, and
+		//it stayed in menu_selectedPresetNr[0] for the next kit save to write with.
+		if(frontParser_midiMsg.data2 >= NUM_KIT_SLOTS)
+			return;
 		menu_selectedPresetNr[0] = frontParser_midiMsg.data2;
 		//preset_loadDrumset(frontParser_midiMsg.data2, 0);
 		preset_loadDrumsetRam(frontParser_midiMsg.data2,0, 0);
