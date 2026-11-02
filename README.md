@@ -98,6 +98,10 @@ sounds, compatibility and the hardware checklist are in
 The global menu shows the audio CPU load. It can also be read over SysEx with `tools/lxr_status.py`.
 See [docs/performance.md](docs/performance.md).
 
+One behaviour is documented rather than fixed: **pulling the SD card while the unit is reading or
+writing it hangs the firmware** and needs a power cycle. Why it is left as it is, and where it is in
+the source, are in [docs/known-issues.md](docs/known-issues.md).
+
 ### Installing the update
 
 1. Copy `LXR_<name>_V<version>.img` from `build/release/` to the top folder of the SD card. Delete any
