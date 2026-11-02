@@ -1118,8 +1118,23 @@ static uint8_t preset_readGlobalData()
 	const uint8_t numGlobals = NUM_PARAMS - PAR_BEGINNING_OF_GLOBALS;
 	// stock v1.7 files only contain the globals up to PAR_PATTERN_MODE
 	const uint8_t numLegacyGlobals = PAR_SYSEX_ENABLE - PAR_BEGINNING_OF_GLOBALS;
-	f_read((FIL*)&SDFile,&activeParameters[PAR_BEGINNING_OF_GLOBALS],numGlobals,&bytesRead);
+	uint8_t staged[NUM_PARAMS - PAR_BEGINNING_OF_GLOBALS];
+
+	/* Staged, not read straight into activeParameters: a file that stops part
+	   way through leaves the settings part from the card and part from the
+	   project before it, and the caller cannot tell that happened. Nothing is
+	   applied unless the whole file is there.
+
+	   The values are not range checked, on purpose. Erica's own glo.cfg files
+	   carry PAR_MIDI_CHAN_GLOBAL = 0 and PAR_MIDI_NOTEn = 0 in all six factory
+	   projects, both outside the ranges docs/params.json documents, and
+	   buttonHandler.c:1178 stores SKIP_NEXT_KIT_AUTOLOAD (2) in
+	   PAR_PATTERN_MODE, which that file calls a 0-1 menu. A clamp built from
+	   those ranges would silently rewrite valid files. */
+	bytesRead = 0;
+	if(f_read((FIL*)&SDFile,staged,numGlobals,&bytesRead) != FR_OK) return 0;
 	if(bytesRead < numLegacyGlobals) return 0;
+	memcpy(&activeParameters[PAR_BEGINNING_OF_GLOBALS],staged,bytesRead);
 	preset_sanitizeSysexGlobals(bytesRead < numGlobals);
 	return 1;
 
@@ -1216,6 +1231,23 @@ void preset_createGlobals()
 {
 	preset_loadDefaultGlobals();
 	preset_saveGlobals();
+}
+//----------------------------------------------------
+/* A glo.cfg that cannot be used - missing, short, unreadable - leaves the
+   settings undefined: without this the running state keeps whatever the
+   previous project put there while the card says something else. Fall back to
+   the defaults, push them out like a successful load does, and say so, because
+   the user's settings for this project have just been ignored. */
+void preset_useDefaultGlobals()
+{
+	preset_loadDefaultGlobals();
+	menu_sendAllGlobals();
+	lcd_clear();
+	lcd_home();
+	lcd_string(PSTR("glo.cfg error"));
+	lcd_setcursor(0,2);
+	lcd_string("Using defaults.");
+	HAL_Delay(1000);
 }
 //----------------------------------------------------
 FRESULT preset_loadLastUsedProjectNrFromSD(uint8_t* projNr)
@@ -3010,7 +3042,8 @@ FRESULT preset_loadProject(uint8_t presetNr, uint8_t clearTmp)
 	f_close((FIL*)&SDFile);
 
 	//load globals
-	preset_loadGlobals();
+	if(!preset_loadGlobals())
+		preset_useDefaultGlobals();
 	//load all drumkits, patterns and songs
 	for(uint8_t i=0;i<NUM_KIT_SLOTS;i++)
 	{

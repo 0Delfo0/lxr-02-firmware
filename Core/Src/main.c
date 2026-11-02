@@ -494,14 +494,10 @@ if(sd_card_ok)
 	{
 		if(!preset_loadGlobals())
 		{
-			lcd_clear();
-			lcd_home();
-			lcd_string(PSTR("glo.cfg error"));
-			lcd_setcursor(0,2);
-			lcd_string("Using defaults.");
-			preset_createGlobals();
-			HAL_Delay(1000);
-
+			preset_useDefaultGlobals();
+			/* at boot the file is also created, which a project load must
+			   not do - it would rewrite the project being loaded */
+			preset_saveGlobals();
 		}
 	}
 
