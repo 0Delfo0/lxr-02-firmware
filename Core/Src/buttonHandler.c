@@ -922,7 +922,8 @@ static void buttonHandler_seqButtonPressed(uint8_t seqButtonPressed)
 			//else
 			//{
 				//reload kit to edit buffer
-				preset_loadDrumsetRam(menu_selectedPresetNr[SAVE_TYPE_KIT],0, 0);
+				//the kit being edited, not the slot the encoder last scrolled to
+				preset_loadDrumsetRam(menu_loadedPresetNr[CURRENT_KIT],0, 0);
 				preset_touchTimer(PRESET_KIT_TIMER);
 			//}
 		}

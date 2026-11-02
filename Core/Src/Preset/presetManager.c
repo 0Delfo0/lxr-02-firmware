@@ -105,6 +105,9 @@ static void preset_makeFileNameSave(char *buf, uint8_t num, uint8_t type, char *
 static FRESULT preset_fopenWrite(FIL *file, const char *path);
 static FRESULT preset_fwrite(FIL *file, const void *data, UINT size);
 static FRESULT preset_fcloseWrite(FIL *file);
+static FRESULT preset_abortSdOperation(FRESULT res);
+static FRESULT preset_removeFolder(const char *path);
+static void preset_recoverInterruptedSave(uint8_t presetNr);
 
 //static void preset_makeFileNameTemp(char *buf, uint8_t num, uint8_t type);
 
@@ -116,6 +119,25 @@ uint32_t preset_patTimer = 0;
 
 uint8_t preset_kitDirty = 0;
 uint8_t preset_patDirty = 0;
+
+/* Track length as it comes off the card. The sequencer reads 0 as 16
+   (sequencer.c:1413,1636), so 0 is kept; a length above NUM_STEPS is not a
+   length at all. Unchecked, 200 reaches seq_subStepPattern[...][length-1]
+   (sequencer.c:1146) and quantizedStep % length (sequencer.c:2533), which
+   writes a note past the end of the 64-step array. */
+static uint8_t preset_validLength(uint8_t length)
+{
+	return length > NUM_STEPS ? NUM_STEPS : length;
+}
+
+/* A pattern's kit number indexes mainParameters[NUM_KIT_SLOTS] by way of
+   preset_loadDrumsetRam() (main.c:866, sequencer.c:665). The SysEx path
+   already clamps it (SysexHandler.c:425); the card path did not. */
+static void preset_validateKitNr(uint8_t patternNr)
+{
+	if(seq_patternSet.kitNr[patternNr] >= NUM_KIT_SLOTS)
+		seq_patternSet.kitNr[patternNr] = 0;
+}
 
 void preset_initTmpFolder()
 {
@@ -177,27 +199,13 @@ FRESULT loadTmpFolderFiles()
 		if ((res != FR_OK) && (res != FR_NO_FILE))
 		{
 			f_close((FIL*)&SDFile);
-			lcd_process_display_interrupt = 1;
-			preset_initTmpFolder();
-#if USE_INTERRUPT_ONLY_DURING_SAVE_PROJ
-			HAL_TIM_Base_Stop_IT(&htim2);	//calc sample interrupt - prio 1
-#else
-
-#endif
-			return res;
+			return preset_abortSdOperation(res);
 		}
 		res = preset_loadSongSD(i);
 		if ((res != FR_OK) && (res != FR_NO_FILE))
 		{
 			f_close((FIL*)&SDFile);
-			lcd_process_display_interrupt = 1;
-			preset_initTmpFolder();
-#if USE_INTERRUPT_ONLY_DURING_SAVE_PROJ
-			HAL_TIM_Base_Stop_IT(&htim2);	//calc sample interrupt - prio 1
-#else
-
-#endif
-			return res;
+			return preset_abortSdOperation(res);
 		}
 	}
 
@@ -478,7 +486,7 @@ FRESULT preset_LoadTmpPat()
 				for(uint8_t trk=0; trk<NUM_TRACKS;trk++)
 				{
 					f_read((FIL*)&SDFile,(void*)&next,sizeof(uint8_t),&bytesRead);
-					seq_patternSet.length[patternNr][trk] = next;
+					seq_patternSet.length[patternNr][trk] = preset_validLength(next);
 				}
 
 			success=1; // just to document that we don't consider this a failure, we just didn't read the bytes for this
@@ -488,6 +496,7 @@ FRESULT preset_LoadTmpPat()
 		{
 			f_read((FIL*)&SDFile,(void*)&seq_patternSet.kitNr[patternNr],sizeof(uint8_t),&bytesRead);
 			if(bytesRead == 0) success = 0;
+			preset_validateKitNr(patternNr);
 
 		}
 		if(success && f_size((FIL*)&SDFile) >= 1u + PATTERN_BODY_V3_LEN + SEQ_CONDITION_BYTES)
@@ -1225,6 +1234,11 @@ FRESULT preset_loadLastUsedProjectNrFromSD(uint8_t* projNr)
     }
 
     res=f_read((FIL*)&SDFile, projNr,1, &bytesRead);
+	/* The number indexes savefileNames[NUM_KIT_SLOTS], which menu.c:1988
+	   writes through, by way of menu_selectedPresetNr[SAVE_TYPE_PROJECT]
+	   (main.c:854), so a damaged proj.idx must not get that far. */
+	if(*projNr >= NUM_KIT_SLOTS)
+		*projNr = 0;
 	//close the file handle
 	f_close((FIL*)&SDFile);
 
@@ -2094,7 +2108,7 @@ static uint8_t preset_readPatternData(uint8_t patternNr, uint8_t dataVersion)
 			for(uint8_t trk=0; trk<NUM_TRACKS;trk++)
 			{
 				f_read((FIL*)&SDFile,(void*)&next,sizeof(uint8_t),&bytesRead);
-				seq_patternSet.length[patternNr][trk] = next;
+				seq_patternSet.length[patternNr][trk] = preset_validLength(next);
 			}
 
 		success=1; // just to document that we don't consider this a failure, we just didn't read the bytes for this
@@ -2104,6 +2118,7 @@ static uint8_t preset_readPatternData(uint8_t patternNr, uint8_t dataVersion)
 	{
 		f_read((FIL*)&SDFile,(void*)&seq_patternSet.kitNr[patternNr],sizeof(uint8_t),&bytesRead);
 		if(bytesRead == 0) success = 0;
+		preset_validateKitNr(patternNr);
 
 	}
 	if(success && dataVersion >= 4)
@@ -2440,12 +2455,69 @@ FRESULT preset_createProject(uint8_t presetNr)
 // save all settings (global, pattern, kit)
 // or save performance settings (pattern, kit)
 
+/* Every failure path of a project load or save ends the same way: give the
+   display back, put the /tmp working copy back and, when the audio interrupt was
+   turned on for the operation, turn it off again. There were eight textually
+   identical copies of this - which is why the globals save had no check at all,
+   since adding one meant a ninth. The name says "SD operation" rather than
+   "save" because the load paths use the same clean-up. */
+/* Remove a folder and everything in it. Missing counts as success: the callers
+   use it to clear leftovers that are normally not there. */
+/* Set while a project save is writing into /projNNn, so that any of the save's
+   many failure exits leaves nothing behind: preset_abortSdOperation() removes
+   it. Without this a failed save left a part-written /projNNn on the card,
+   holding the space it had used until the next save cleared it. */
+static char preset_pendingNewFolder[13] = "";
+
+static FRESULT preset_removeFolder(const char *path)
+{
+	FILINFO fno;
+	if(f_stat(path, &fno) != FR_OK)
+		return FR_OK;
+	sprintf(emptyDirPath, "%s", path);
+	return delete_node(emptyDirPath, sizeof emptyDirPath / sizeof emptyDirPath[0], &fno);
+}
+
+/* A project save swaps two folders, and between the two renames /projNN does
+   not exist. If the power goes at that moment the data is in /projNNo, so put
+   it back the next time anything looks for the project. Costs one f_stat on a
+   path that is normally absent. */
+static void preset_recoverInterruptedSave(uint8_t presetNr)
+{
+	FILINFO fno;
+	char projFolder[13], oldFolder[13];
+	sprintf(projFolder, "/proj%02d", presetNr);
+	sprintf(oldFolder, "/proj%02do", presetNr);
+	if(f_stat(projFolder, &fno) == FR_NO_FILE && f_stat(oldFolder, &fno) == FR_OK)
+		f_rename(oldFolder, projFolder);
+}
+
+static FRESULT preset_abortSdOperation(FRESULT res)
+{
+	if(preset_pendingNewFolder[0])
+	{
+		f_chdir("/");
+		preset_removeFolder(preset_pendingNewFolder);
+		preset_pendingNewFolder[0] = 0;
+	}
+	lcd_process_display_interrupt = 1;
+	preset_initTmpFolder();
+#if USE_INTERRUPT_ONLY_DURING_SAVE_PROJ
+	HAL_TIM_Base_Stop_IT(&htim2);	//calc sample interrupt - prio 1
+#endif
+	return res;
+}
+
 FRESULT preset_saveProject(uint8_t presetNr)
 {
 	FRESULT res;
 	FILINFO fno;
+	char newFolder[13], oldFolder[13];
 
-	preset_saveDrumsetRam(menu_selectedPresetNr[SAVE_TYPE_KIT], 0);
+	/* The kit being edited, not the slot the encoder was last turned to in a
+	   load or save menu. Scrolling that menu without pressing anything used to
+	   decide where the edit buffer was written. */
+	preset_saveDrumsetRam(menu_loadedPresetNr[CURRENT_KIT], 0);
 	preset_savePatternRAM(seq_activePattern);
 
 #if USE_INTERRUPT_ONLY_DURING_SAVE_PROJ
@@ -2473,61 +2545,39 @@ FRESULT preset_saveProject(uint8_t presetNr)
 	}
 */
 	//change project folder
+	/* The project is written into /projNNn and only becomes /projNN once every
+	   file is on the card, so a save that fails - a full card, a card pulled -
+	   leaves the project that was there untouched. It used to empty /projNN
+	   first and write into it, which destroyed the destination before the
+	   replacement existed (#65).
+
+	   Three names are in play:
+	     /projNN   the project, as everything else knows it
+	     /projNNn  the one being written
+	     /projNNo  the previous one, between the two renames at the end
+	   All of them are 8.3 names, which FatFs needs here (_USE_LFN 0). */
 	sprintf(currentFolder, "/proj%02d", presetNr);
+	sprintf(newFolder, "/proj%02dn", presetNr);
+	sprintf(oldFolder, "/proj%02do", presetNr);
 
-	res = f_stat(currentFolder, &fno);
-	if(res == FR_NO_FILE)
-	{
+	/* Leftovers from a save that did not finish. */
+	res = preset_removeFolder(newFolder);
+	if(res == FR_OK)
+		res = preset_removeFolder(oldFolder);
+
+	/* A project that does not exist yet gets its folder now, so the rename at
+	   the end always has something to move aside. */
+	if(res == FR_OK && f_stat(currentFolder, &fno) == FR_NO_FILE)
 		res = f_mkdir(currentFolder);
-		if(res == FR_OK)
-		{
-			f_chdir(currentFolder);
-		}
-		else
-		{
-			lcd_process_display_interrupt = 1;
-			preset_initTmpFolder();
-#if USE_INTERRUPT_ONLY_DURING_SAVE_PROJ
-			HAL_TIM_Base_Stop_IT(&htim2);	//calc sample interrupt - prio 1
-#else
 
-#endif
-
-
-			return res;
-		}
-	}
-	else
-	{
-		sprintf(emptyDirPath, "%s", currentFolder);
-		res = empty_directory(emptyDirPath, sizeof emptyDirPath / sizeof emptyDirPath[0]);
-		if(res != FR_OK)
-		{
-			lcd_process_display_interrupt = 1;
-			preset_initTmpFolder();
-#if USE_INTERRUPT_ONLY_DURING_SAVE_PROJ
-			HAL_TIM_Base_Stop_IT(&htim2);	//calc sample interrupt - prio 1
-#else
-
-#endif
-
-			return res;
-		}
-
-		res = f_chdir(currentFolder);
-		if(res != FR_OK)
-		{
-			lcd_process_display_interrupt = 1;
-			preset_initTmpFolder();
-#if USE_INTERRUPT_ONLY_DURING_SAVE_PROJ
-			HAL_TIM_Base_Stop_IT(&htim2);	//calc sample interrupt - prio 1
-#else
-
-#endif
-
-			return res;
-		};
-	}
+	if(res == FR_OK)
+		res = f_mkdir(newFolder);
+	if(res == FR_OK)
+		res = f_chdir(newFolder);
+	if(res != FR_OK)
+		return preset_abortSdOperation(res);
+	/* from here on a failure must take /projNNn with it */
+	sprintf(preset_pendingNewFolder, "%s", newFolder);
 	//save data
 
 #if 1
@@ -2568,7 +2618,12 @@ FRESULT preset_saveProject(uint8_t presetNr)
 
 //	soundengine_process();
 	//save globals
-	preset_saveGlobals();
+	/* The result used to be thrown away, so a globals write that failed - a full
+	   card, most likely - left the project with a glo.cfg that is short or
+	   missing and reported success (#69). */
+	res = preset_saveGlobals();
+	if(res != FR_OK)
+		return preset_abortSdOperation(res);
 	//save all drumkits, patterns and songs
 	for(uint8_t i=0;i<NUM_KIT_SLOTS;i++)
 	{
@@ -2591,28 +2646,38 @@ FRESULT preset_saveProject(uint8_t presetNr)
 	//	soundengine_process();
 		res = preset_savePatternSD(i);
 		if(res != FR_OK) {
-			lcd_process_display_interrupt = 1;
-			preset_initTmpFolder();
-#if USE_INTERRUPT_ONLY_DURING_SAVE_PROJ
-			HAL_TIM_Base_Stop_IT(&htim2);	//calc sample interrupt - prio 1
-#else
-
-#endif
-			return res;
+			return preset_abortSdOperation(res);
 		}
 	//	soundengine_process();
 		res = preset_saveSongSD(i);
 		if(res != FR_OK) {
-			lcd_process_display_interrupt = 1;
-			preset_initTmpFolder();
-#if USE_INTERRUPT_ONLY_DURING_SAVE_PROJ
-			HAL_TIM_Base_Stop_IT(&htim2);	//calc sample interrupt - prio 1
-#else
-
-#endif
-			return res;
+			return preset_abortSdOperation(res);
 		}
 	}
+
+	/* Everything is written. Swap the folders: the project that was there stays
+	   until the new one has taken its place, and if the second rename fails the
+	   first is undone so /projNN still exists. Between the two renames /projNN
+	   is absent - preset_recoverInterruptedSave() puts /projNNo back if the
+	   power goes exactly there. */
+	res = f_chdir("/");
+	if(res == FR_OK)
+		res = f_rename(currentFolder, oldFolder);
+	if(res != FR_OK)
+		return preset_abortSdOperation(res);
+
+	res = f_rename(newFolder, currentFolder);
+	if(res != FR_OK)
+	{
+		f_rename(oldFolder, currentFolder);	//put the old one back
+		return preset_abortSdOperation(res);
+	}
+
+	preset_pendingNewFolder[0] = 0;	//it is /projNN now, not a leftover
+
+	/* The save has succeeded by now; failing to remove the previous copy costs
+	   space and nothing else, so it does not fail the save. */
+	preset_removeFolder(oldFolder);
 
 	lcd_process_display_interrupt = 1;
 	preset_initTmpFolder();
@@ -2783,6 +2848,9 @@ void preset_loadProjectNames(uint8_t projectNr)
 	FILINFO fno;
 
 	//change project folder
+	/* If a save was interrupted between its two renames, /projNN is missing
+	   and the data is in /projNNo. Put it back before looking for it. */
+	preset_recoverInterruptedSave(projectNr);
 	sprintf(currentFolder, "/proj%02d", projectNr);
 
 	res = f_stat(currentFolder, &fno);
@@ -2857,6 +2925,8 @@ FRESULT preset_loadProject(uint8_t presetNr, uint8_t clearTmp)
 	lcd_string(PSTR("0%"));
 
 	//change project folder
+	/* Same recovery as above, for this load path. */
+	preset_recoverInterruptedSave(presetNr);
 	sprintf(currentFolder, "/proj%02d", presetNr);
 
 	res = f_stat(currentFolder, &fno);
@@ -2869,14 +2939,7 @@ FRESULT preset_loadProject(uint8_t presetNr, uint8_t clearTmp)
 		}
 		else
 		{
-			lcd_process_display_interrupt = 1;
-			preset_initTmpFolder();
-#if USE_INTERRUPT_ONLY_DURING_SAVE_PROJ
-			HAL_TIM_Base_Stop_IT(&htim2);	//calc sample interrupt - prio 1
-#else
-
-#endif
-			return res;
+			return preset_abortSdOperation(res);
 		}
 	}
 	else
@@ -2884,14 +2947,7 @@ FRESULT preset_loadProject(uint8_t presetNr, uint8_t clearTmp)
 		res = f_chdir(currentFolder);
 		if (res != FR_OK)
 		{
-			lcd_process_display_interrupt = 1;
-			preset_initTmpFolder();
-#if USE_INTERRUPT_ONLY_DURING_SAVE_PROJ
-			HAL_TIM_Base_Stop_IT(&htim2);	//calc sample interrupt - prio 1
-#else
-
-#endif
-			return res;
+			return preset_abortSdOperation(res);
 		}
 	}
 	//load data
@@ -2981,27 +3037,13 @@ FRESULT preset_loadProject(uint8_t presetNr, uint8_t clearTmp)
 		if ((res != FR_OK) && (res != FR_NO_FILE))
 		{
 			f_close((FIL*)&SDFile);
-			lcd_process_display_interrupt = 1;
-			preset_initTmpFolder();
-#if USE_INTERRUPT_ONLY_DURING_SAVE_PROJ
-			HAL_TIM_Base_Stop_IT(&htim2);	//calc sample interrupt - prio 1
-#else
-
-#endif
-			return res;
+			return preset_abortSdOperation(res);
 		}
 		res = preset_loadSongSD(i);
 		if ((res != FR_OK) && (res != FR_NO_FILE))
 		{
 			f_close((FIL*)&SDFile);
-			lcd_process_display_interrupt = 1;
-			preset_initTmpFolder();
-#if USE_INTERRUPT_ONLY_DURING_SAVE_PROJ
-			HAL_TIM_Base_Stop_IT(&htim2);	//calc sample interrupt - prio 1
-#else
-
-#endif
-			return res;
+			return preset_abortSdOperation(res);
 		}
 	}
 
