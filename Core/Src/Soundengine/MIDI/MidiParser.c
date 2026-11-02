@@ -1934,8 +1934,14 @@ void midiParser_parseMidiMessage(MidiMsg msg)
 			else
 			{
 
-				// respond to CC message. This responds only when global channel or voice channel matches the cc message's channel
-				if((midiParser_txRxFilter & MIDI_FILTER_CC) && ((chanonly == midi_MidiChannels[voiceNr]) || (chanonly == midi_MidiChannels[7]) )) {
+				/* respond to CC message. This responds only when global channel or voice channel matches the cc message's channel
+				   voiceNr-1: midiParser_cc2voiceNr() counts voices from 1 and
+				   reserves 0 for "no voice" and 7 for "all voices" (CC 115),
+				   while midi_MidiChannels is 0-based with element 7 the global
+				   channel. Indexing it by voiceNr therefore read the NEXT
+				   voice's channel, so every voice's CCs answered on its
+				   neighbour's channel. */
+				if((midiParser_txRxFilter & MIDI_FILTER_CC) && ((chanonly == midi_MidiChannels[voiceNr-1]) || (chanonly == midi_MidiChannels[7]) )) {
 					//record automation if record is turned on
 					seq_recordAutomation(frontParser_activeTrack, msg.data1, msg.data2);
 
