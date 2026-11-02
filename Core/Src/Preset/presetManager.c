@@ -2488,7 +2488,10 @@ FRESULT preset_saveProject(uint8_t presetNr)
 	FILINFO fno;
 	char newFolder[13], oldFolder[13];
 
-	preset_saveDrumsetRam(menu_selectedPresetNr[SAVE_TYPE_KIT], 0);
+	/* The kit being edited, not the slot the encoder was last turned to in a
+	   load or save menu. Scrolling that menu without pressing anything used to
+	   decide where the edit buffer was written. */
+	preset_saveDrumsetRam(menu_loadedPresetNr[CURRENT_KIT], 0);
 	preset_savePatternRAM(seq_activePattern);
 
 #if USE_INTERRUPT_ONLY_DURING_SAVE_PROJ
