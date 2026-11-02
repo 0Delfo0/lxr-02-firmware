@@ -888,9 +888,16 @@ void preset_init(uint8_t presetNr)
 
 	para=mainParameters[presetNr];
 
-	for(int i=8;i<END_OF_SOUND_PARAMETERS; i++)
+	/* initKit is 8 name bytes followed by the parameters, so parameter n is
+	   initKit[8+n]. The loop used to stop at END_OF_SOUND_PARAMETERS while
+	   reading from i and writing to i-8, which filled parameters 0-238 and
+	   left 239-246 - PAR_FX_P2 to PAR_MORPH_KIT_DEST - holding whatever the
+	   previous kit had. INIT_KIT_SIZE is 254, so the array reaches parameter
+	   245 and PAR_MORPH_KIT_DEST (246) has no initial value of its own: it
+	   is zeroed rather than inherited. */
+	for(i=0;i<END_OF_SOUND_PARAMETERS; i++)
 	{
-		para[i-8] = initKit[i];
+		para[i] = i < INIT_KIT_SIZE - 8 ? initKit[8 + i] : 0;
 	}
 	kitEngine_migrate(para, END_OF_SOUND_PARAMETERS, NULL, 0);
 
