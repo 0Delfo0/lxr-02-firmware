@@ -1541,21 +1541,24 @@ static void midiParser_noteOn(uint8_t voice, uint8_t note, uint8_t vel, uint8_t 
 
 		voiceControl_noteOn(voice,note,vel);
 
-		//Recording Mode - record the note to sequencer and echo to channel of that voice
-		// (we'd want to hear what's being recorded)
+		/* Echo the played note to the outputs. This used to happen inside
+		   voiceControl_noteOn(), which sent the raw note with no note off before
+		   it; it is here now so that each caller sends exactly one note on, with
+		   the note number that belongs on the wire, after releasing whatever was
+		   still sounding on that channel - the same order seq_triggerVoice()
+		   uses. Previously the note off was sent only while recording, so a
+		   played note could hang on the receiving instrument.
+		     todo a user played note will end up being turned off if a pattern
+		     switch happens. To fix this we'd have to differentiate between a user
+		     played note and a note triggered from the sequencer, and also
+		     recognize note off on a user played note and send it. */
+		const uint8_t chan=midi_MidiChannels[voice];
+		seq_midiNoteOff(chan);
+		seq_sendMidiNoteOn(chan, note, vel);
+
+		//Recording Mode - record the note to sequencer
 		if(do_rec) {
-			const uint8_t chan=midi_MidiChannels[voice];
-
-			// record note if rec is on
 			seq_addNote(voice,vel, note);
-
-			//if a note is on for that channel send note-off first
-			seq_midiNoteOff(chan);
-			//send the new note to midi/usb out
-			// todo a user played note will end up being turned off if a pattern switch happens.
-			//           to fix this we'd have to differentiate between a user played note and a
-			//           note triggered from sequencer, and also recognize note off on user played note and send it.
-			seq_sendMidiNoteOn(chan, note, vel);
 		}
 
 	}
