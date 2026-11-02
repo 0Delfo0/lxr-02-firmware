@@ -8,12 +8,12 @@
  *   - the project number in /proj.idx.
  *
  * The consequence of an unchecked track length is in seq_processFlam()
- * (sequencer.c:1146): on step 0 it reads seq_subStepPattern[...][length-1],
- * so a length of 200 reads 136 Step structures past the end of the 64-step
- * array, which UBSan reports as "index 12 out of bounds for type uint16_t
- * [4][64][7]" at sequencer.c:2169 - bar 199/16 = 12 of 4. The last section
- * plays the loaded pattern, which is where a build without the range check
- * produces that report.
+ * (sequencer.c:1146): on step 0 it takes prevStep = length-1 and hands that
+ * step number to seq_getShiftFlamPattern(), which asks
+ * seq_intIsMainStepActive() for bar 199/16 = 12 of
+ * seq_mainSteps[4][64][7] (sequencer.c:2169). The last section plays the
+ * loaded pattern, which is where a build without the range check produces
+ * that report.
  *
  * Copyright (C) 2026 LXR-02 Emu contributors
  * SPDX-License-Identifier: GPL-3.0-only
