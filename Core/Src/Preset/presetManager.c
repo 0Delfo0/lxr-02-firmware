@@ -102,6 +102,9 @@ static void preset_makeFileNameOld(char *buf, uint8_t num, uint8_t type);
 static FRESULT preset_makeFileNameLoad(char *buf, uint8_t num, uint8_t type);
 //save uses the kit name to create a filename eg 00-NAME.ext
 static void preset_makeFileNameSave(char *buf, uint8_t num, uint8_t type, char *name);
+static const char *preset_fileExtension(uint8_t type);
+static void preset_makeFileNamePattern(char *buf, uint8_t num, uint8_t type);
+static void preset_removeStaleSlotFiles(uint8_t num, uint8_t type, const char *keep);
 static FRESULT preset_fopenWrite(FIL *file, const char *path);
 static FRESULT preset_fwrite(FIL *file, const void *data, UINT size);
 static FRESULT preset_fcloseWrite(FIL *file);
@@ -1042,6 +1045,8 @@ FRESULT preset_saveDrumsetSD(uint8_t presetNr, uint8_t isMorph)
 	
 	//close the file
 	res = preset_fcloseWrite((FIL*)&SDFile);
+	if(res == FR_OK)
+		preset_removeStaleSlotFiles(presetNr, FEXT_SOUND, filename);
 
 	return res;
 #else
@@ -1842,6 +1847,7 @@ FRESULT preset_savePatternSD(uint8_t presetNr)
 	//close the file
 	res = preset_fcloseWrite((FIL*)&SDFile);
 	if(res != FR_OK) return res;
+	preset_removeStaleSlotFiles(presetNr, FEXT_PAT, filename);
 
 	//reset the lcd
 	menu_repaintAll();
@@ -2837,6 +2843,8 @@ FRESULT preset_saveSongSD(uint8_t songNr)
 
 	//close the file handle
 	res = f_close((FIL*)&SDFile);
+	if(res == FR_OK)
+		preset_removeStaleSlotFiles(songNr, FEXT_SONG, filename);
 	return res;
 }
 
@@ -3233,6 +3241,97 @@ static void preset_makeFileNameOld(char *buf, uint8_t num, uint8_t type)
 
 
 //load uses wildcard to find a name of the pattern 00-*.ext
+static const char *preset_fileExtension(uint8_t type)
+{
+	switch(type) {
+	case FEXT_SOUND:
+		return PSTR(".snd");
+	case FEXT_PAT:
+		return PSTR(".pat");
+	case FEXT_ALL:
+		return PSTR(".all");
+	case FEXT_SONG:
+		return PSTR(".sng");
+	default:
+	case FEXT_PROJ:
+		return PSTR(".prj");
+	}
+}
+
+/* "NN-*.ext": every file that belongs to a slot, which is what the loader
+   matches on and what the stale file clean-up has to look for. */
+static void preset_makeFileNamePattern(char *buf, uint8_t num, uint8_t type)
+{
+	numtostrpu_2Bytes(&buf[0],num,'0');
+	buf[2] = '-';
+	buf[3] = '*';
+	strcpy(&buf[4],preset_fileExtension(type));
+	buf[8] = 0;
+}
+
+/* 8.3 names come back from FatFs in upper case while the names we build are
+   lower case, so the one file to keep has to be recognised without regard to
+   case. */
+static uint8_t preset_sameFileName(const char *a, const char *b)
+{
+	/* 8.3 names are ASCII, so this does not need ctype */
+	for( ; *a && *b; a++, b++)
+	{
+		const char ca = (*a >= 'a' && *a <= 'z') ? (char)(*a - 'a' + 'A') : *a;
+		const char cb = (*b >= 'a' && *b <= 'z') ? (char)(*b - 'a' + 'A') : *b;
+		if(ca != cb)
+			return 0;
+	}
+	return *a == *b;
+}
+
+/* A slot's file name carries the first five characters of the slot name, so
+   saving a renamed slot writes NN-NEWNAME.ext and leaves NN-OLDNAME.ext behind.
+   The loader takes the first NN-*.ext that f_findfirst() returns, so which of
+   the two answers is directory order, and a slot can come back with its
+   previous contents (P4). Called after the new file is written, never before:
+   the slot must never be without a file, which is what #65 was about. */
+static void preset_removeStaleSlotFiles(uint8_t num, uint8_t type, const char *keep)
+{
+	char pattern[9];
+	preset_makeFileNamePattern(pattern,num,type);
+
+	/* One file per pass: FatFs does not define what happens to an open
+	   directory when the directory is modified, so the search is closed before
+	   anything is unlinked. The guard is the number of files a slot could
+	   plausibly have accumulated. */
+	for(uint8_t pass=0; pass<16; pass++)
+	{
+		DIR dj;
+		FILINFO fno;
+		char victim[13];
+
+		victim[0] = 0;
+		if(f_findfirst(&dj, &fno, "", pattern) != FR_OK)
+		{
+			f_closedir(&dj);
+			return;
+		}
+		while(fno.fname[0])
+		{
+			if(!preset_sameFileName(fno.fname, keep))
+			{
+				strcpy(victim, fno.fname);
+				break;
+			}
+			if(f_findnext(&dj, &fno) != FR_OK)
+				break;
+		}
+		f_closedir(&dj);
+
+		if(victim[0] == 0)
+			return;
+		if(f_unlink(victim) != FR_OK)
+			return;
+	}
+}
+
+//----------------------------------------------------
 static FRESULT preset_makeFileNameLoad(char *buf, uint8_t num, uint8_t type)
 {
 
@@ -3240,32 +3339,7 @@ static FRESULT preset_makeFileNameLoad(char *buf, uint8_t num, uint8_t type)
     DIR dj;         /* Directory object */
     FILINFO fno;    /* File information */
 
-	const char *ext;
-	numtostrpu_2Bytes(&buf[0],num,'0');
-	buf[2] = '-';
-	buf[3] = '*';
-
-	switch(type) {
-	case FEXT_SOUND:
-		ext=PSTR(".snd");
-		break;
-	case FEXT_PAT:
-		ext=PSTR(".pat");
-		break;
-	case FEXT_ALL:
-		ext=PSTR(".all");
-		break;
-	default:
-	case FEXT_PROJ:
-		ext=PSTR(".prj");
-		break;
-
-	case FEXT_SONG:
-		ext=PSTR(".sng");
-		break;
-	}
-	strcpy(&buf[4],ext);
-	buf[8] = 0;
+	preset_makeFileNamePattern(buf,num,type);
 
 
     fr = f_findfirst(&dj, &fno, "", buf);  /* Start to search for preset files */
@@ -3316,7 +3390,6 @@ static void preset_makeFileNameSave(char *buf, uint8_t num, uint8_t type, char *
 	clearedName[8] = 0;
 	clearIllegalCharacters(name , clearedName, 8);
 	//name scheme: 01-NAME.ext
-	const char *ext;
 	numtostrpu_2Bytes(&buf[0],num,'0');
 	buf[2] = '-';
 
@@ -3337,26 +3410,7 @@ static void preset_makeFileNameSave(char *buf, uint8_t num, uint8_t type, char *
 		}
 	}
 
-	switch(type) {
-	case FEXT_SOUND:
-		ext=PSTR(".snd");
-		break;
-	case FEXT_PAT:
-		ext=PSTR(".pat");
-		break;
-	case FEXT_ALL:
-		ext=PSTR(".all");
-		break;
-	default:
-	case FEXT_PROJ:
-		ext=PSTR(".prj");
-		break;
-
-	case FEXT_SONG:
-		ext=PSTR(".sng");
-		break;
-	}
-	strcpy(&buf[3+i],ext);
+	strcpy(&buf[3+i],preset_fileExtension(type));
 }
 
 //----------------------------------------------------
