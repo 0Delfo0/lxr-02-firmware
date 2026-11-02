@@ -102,10 +102,35 @@ int main(void)
 		failures++;
 	}
 
-	/* 4. The other half of #70: what the user is shown. menu_showSdError() is
+	/* 4. A whole project save on a full card (#69). The save writes prj.nfo
+	 *    first and glo.cfg second, and both are smaller than one 1024-byte
+	 *    cluster, so leaving exactly one cluster free lets prj.nfo through and
+	 *    makes the globals write the one that fails.
+	 *
+	 *    Measured, and it does NOT distinguish before #69 from after: the save
+	 *    returns FR_DENIED either way. Before the fix the globals failure was
+	 *    swallowed and the first kit save failed instead, which is the same
+	 *    result code from one line further on - the pattern #73's forensics
+	 *    showed on the card, where one failure was swallowed and the next was
+	 *    caught. So this is a non-regression check that a full card is still
+	 *    reported, not a demonstration of #69; that one rests on the code path
+	 *    and on the globals result no longer being discarded. */
+	printf("\n4. a project save with exactly one cluster free\n");
+	card_remove_filler();
+	printf("   filler removed, %llu bytes free\n", (unsigned long long)card_free_bytes());
+	printf("   filled, %llu bytes left\n",
+	       (unsigned long long)card_fill_leaving(card_cluster_bytes()));
+	res = preset_saveProject(63);
+	printf("    preset_saveProject(63)   -> %s\n", fr(res));
+	if (res == FR_OK) {
+		puts("    FAIL - a project save reported success with one cluster free");
+		failures++;
+	}
+
+	/* 5. The other half of #70: what the user is shown. menu_showSdError() is
 	 *    what buttonHandler calls when a save fails, and the emulated LCD can be
 	 *    read, so the message needs no hardware to check. */
-	printf("\n4. the screen for each result code\n");
+	printf("\n5. the screen for each result code\n");
 	static const struct { uint8_t code; const char *name; } codes[] = {
 		{ FR_DENIED,          "FR_DENIED (a full card)" },
 		{ FR_DISK_ERR,        "FR_DISK_ERR" },
