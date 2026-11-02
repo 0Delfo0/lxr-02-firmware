@@ -139,6 +139,114 @@ static void preset_validateKitNr(uint8_t patternNr)
 		seq_patternSet.kitNr[patternNr] = 0;
 }
 
+/* One pattern as it arrives from the card. The readers used to write straight
+   into seq_patternSet, so a file that stopped part way through left a pattern
+   half new and half old, with the sequencer playing the result (P10).
+   3,817 bytes: it lives in the RAM region rather than on the stack, because
+   both readers are reached from the menu and from preset_loadProject(), and it
+   is its own buffer rather than sx_patternBuf or seq_tmpPattern, which would
+   couple a card read to the SysEx path or to the pattern edit buffer. */
+typedef struct
+{
+	Step		steps[NUM_TRACKS][STEPS_PER_PATTERN];
+	StepTiming	timing[NUM_TRACKS][STEPS_PER_PATTERN];
+	uint16_t	mainSteps[NUM_BARS][NUM_TRACKS];
+	uint8_t		shuffle;
+	uint8_t		length[NUM_TRACKS];
+	uint8_t		kitNr;
+	uint8_t		conditions[SEQ_CONDITION_BYTES];
+} PresetPatternBuf;
+static PresetPatternBuf preset_patternBuf;
+
+/* Read one pattern body from the open SDFile into the buffer. hasTiming and
+   hasConditions say whether this generation of the file carries those blocks;
+   the buffer is cleared first, so what a file does not carry reads back as
+   zero instead of as the previous pattern's - which is the second half of P10,
+   patterns from older firmware inheriting flams and shifts never saved with
+   them. Returns 1 when the whole body was there. */
+static uint8_t preset_stagePatternBody(uint8_t hasTiming, uint8_t hasConditions)
+{
+	UINT bytesRead;
+
+	memset(&preset_patternBuf, 0, sizeof(preset_patternBuf));
+
+	for(uint8_t trk=0; trk<NUM_TRACKS; trk++)
+	{
+		f_read((FIL*)&SDFile, preset_patternBuf.steps[trk],
+				sizeof(Step)*STEPS_PER_PATTERN, &bytesRead);
+		if(bytesRead != sizeof(Step)*STEPS_PER_PATTERN)
+			return 0;	// file error, or we ran out of file (eof)
+
+		if(hasTiming)
+		{
+			f_read((FIL*)&SDFile, preset_patternBuf.timing[trk],
+					sizeof(StepTiming)*STEPS_PER_PATTERN, &bytesRead);
+			if(bytesRead != sizeof(StepTiming)*STEPS_PER_PATTERN)
+				return 0;
+		}
+	}
+
+	/* main step data, in the order it is written: track outer, bar inner */
+	for(uint8_t trk=0; trk<NUM_TRACKS; trk++)
+	{
+		for(uint8_t bar=0; bar<NUM_BARS; bar++)
+		{
+			f_read((FIL*)&SDFile, &preset_patternBuf.mainSteps[bar][trk],
+					sizeof(uint16_t), &bytesRead);
+			if(bytesRead != sizeof(uint16_t))
+				return 0;
+		}
+	}
+
+	f_read((FIL*)&SDFile, &preset_patternBuf.shuffle, 1, &bytesRead);
+	if(bytesRead != 1)
+		return 0;
+
+	/* The track lengths may legitimately be absent - older files do not have
+	   them - and that is not a failure. Absent means 0, which the sequencer
+	   reads as 16. */
+	f_read((FIL*)&SDFile, preset_patternBuf.length, NUM_TRACKS, &bytesRead);
+
+	f_read((FIL*)&SDFile, &preset_patternBuf.kitNr, 1, &bytesRead);
+	if(bytesRead == 0)
+		return 0;
+
+	if(hasConditions)
+	{
+		f_read((FIL*)&SDFile, preset_patternBuf.conditions,
+				SEQ_CONDITION_BYTES, &bytesRead);
+		if(bytesRead != SEQ_CONDITION_BYTES)
+			return 0;
+	}
+	return 1;
+}
+
+/* Replace one pattern slot with what was staged, and only then. */
+static void preset_commitPatternBody(uint8_t patternNr)
+{
+	for(uint8_t trk=0; trk<NUM_TRACKS; trk++)
+	{
+		memcpy(seq_patternSet.seq_subStepPattern[patternNr][trk],
+				preset_patternBuf.steps[trk], sizeof(Step)*STEPS_PER_PATTERN);
+		memcpy(seq_patternSet.seq_stepTiming[patternNr][trk],
+				preset_patternBuf.timing[trk],
+				sizeof(StepTiming)*STEPS_PER_PATTERN);
+		seq_patternSet.length[patternNr][trk] =
+				preset_validLength(preset_patternBuf.length[trk]);
+	}
+	for(uint8_t bar=0; bar<NUM_BARS; bar++)
+	{
+		for(uint8_t trk=0; trk<NUM_TRACKS; trk++)
+			seq_patternSet.seq_mainSteps[bar][patternNr][trk] =
+					preset_patternBuf.mainSteps[bar][trk];
+	}
+	seq_patternSet.shuffle[patternNr] = preset_patternBuf.shuffle;
+	seq_patternSet.kitNr[patternNr] = preset_patternBuf.kitNr;
+	preset_validateKitNr(patternNr);
+	memcpy(seq_patternSet.seq_conditions[patternNr],
+			preset_patternBuf.conditions, SEQ_CONDITION_BYTES);
+}
+
 void preset_initTmpFolder()
 {
 	char folderName[13];
@@ -396,7 +504,6 @@ FRESULT preset_LoadTmpPat()
 		seq_copyPatternToBackupBuffer(seq_activePattern);
 		//frontParser_shownPattern = menu_playedPattern;
 		uint8_t patternNr = menu_playedPattern;
-		memset(seq_patternSet.seq_conditions[patternNr], 0, SEQ_CONDITION_BYTES);
 
 	//---------------- read pattern data -----------------------------
 
@@ -404,107 +511,14 @@ FRESULT preset_LoadTmpPat()
 		// This means that loading old patterns with non-standard length, the length will be
 		// ignored and a standard length used. I think it's acceptable as long as users are aware of this.
 
-		uint8_t next=0;
-
-		// ---------- Load step data first
-
-		// load step data
-
-
-
-		for(uint8_t trk=0; trk<NUM_TRACKS;trk++)
-		{
-
-			f_read((FIL*)&SDFile,(void*)&seq_patternSet.seq_subStepPattern[patternNr][trk][0],sizeof(Step)*STEPS_PER_PATTERN,&bytesRead);
-
-			if(bytesRead!=sizeof(Step)*(STEPS_PER_PATTERN))
-			{
-				success=0;
-				break; // file error, or we ran out of file (eof)
-			}
-
-			//Pattern V3 and up => flam added
-			//if(dataVersion > 2)
-			{
-				f_read((FIL*)&SDFile,(void*)&seq_patternSet.seq_stepTiming[patternNr][trk][0],sizeof(uint8_t)*STEPS_PER_PATTERN,&bytesRead);
-
-				if(bytesRead!=sizeof(uint8_t)*(STEPS_PER_PATTERN))
-				{
-					success=0;
-					break; // file error, or we ran out of file (eof)
-				}
-			}
-
-		}
-
-
-
-		// ---------- load the main step data next
-		uint16_t mainStepData;
-
-
-			for(uint8_t trk=0; trk<NUM_TRACKS;trk++)
-			{
-				for(uint8_t bar=0;bar<NUM_BARS; bar++)
-				{
-					f_read((FIL*)&SDFile,(void*)&mainStepData,sizeof(uint16_t),&bytesRead);
-
-					if( bytesRead==sizeof(uint16_t)) {
-						seq_patternSet.seq_mainSteps[bar][patternNr][trk] = mainStepData;
-					}
-					 else {
-							success=0;
-							break;
-						}
-				}
-			}
-
-
-
-		// ------------ shuffle settings
-		if(success) {
-			//load the shuffle settings
-			f_read((FIL*)&SDFile,(void*)&seq_patternSet.shuffle[patternNr],sizeof(uint8_t),&bytesRead);
-			//and update on cortex
-			if(bytesRead)
-			{
-
-				//activeParameters[PAR_SHUFFLE] = seq_patternSet.shuffle[patternNr];
-				//frontPanel_sendData(SEQ_CC,SEQ_SHUFFLE,parameter_values[PAR_SHUFFLE]);
-
-				//seq_setShuffle(activeParameters[PAR_SHUFFLE]/127.f);
-			}
-			else {
-				success=0;
-			}
-		}
-
-		// ----------- Pattern/track lengths
-		// -- AS this might not exist in the saved data file, we still want success
-		if(success) {
-
-				for(uint8_t trk=0; trk<NUM_TRACKS;trk++)
-				{
-					f_read((FIL*)&SDFile,(void*)&next,sizeof(uint8_t),&bytesRead);
-					seq_patternSet.length[patternNr][trk] = preset_validLength(next);
-				}
-
-			success=1; // just to document that we don't consider this a failure, we just didn't read the bytes for this
-		}
-
-		//if(dataVersion > 1)
-		{
-			f_read((FIL*)&SDFile,(void*)&seq_patternSet.kitNr[patternNr],sizeof(uint8_t),&bytesRead);
-			if(bytesRead == 0) success = 0;
-			preset_validateKitNr(patternNr);
-
-		}
-		if(success && f_size((FIL*)&SDFile) >= 1u + PATTERN_BODY_V3_LEN + SEQ_CONDITION_BYTES)
-		{
-			f_read((FIL*)&SDFile, seq_patternSet.seq_conditions[patternNr],
-					SEQ_CONDITION_BYTES, &bytesRead);
-			if(bytesRead != SEQ_CONDITION_BYTES) success = 0;
-		}
+		/* tmp.pat always carries the timing block; the condition block only if
+		   the file is long enough to hold one. Staged, then committed, so a
+		   half-written autosave leaves the pattern as it was. */
+		const uint8_t hasConditions = f_size((FIL*)&SDFile)
+				>= 1u + PATTERN_BODY_V3_LEN + SEQ_CONDITION_BYTES;
+		success = preset_stagePatternBody(1, hasConditions);
+		if(success)
+			preset_commitPatternBody(patternNr);
 
 		if( success == 0)
 		{
@@ -1885,7 +1899,8 @@ FRESULT preset_savePatternSD(uint8_t presetNr)
 // returns 1 on success
 static uint8_t preset_readPatternData(uint8_t patternNr, uint8_t dataVersion)
 {
-	memset(seq_patternSet.seq_conditions[patternNr], 0, SEQ_CONDITION_BYTES);
+	/* the conditions no longer need clearing here: the staging buffer is
+	   cleared before every read and the commit always copies them */
 
 #if 0
 
@@ -2056,109 +2071,14 @@ static uint8_t preset_readPatternData(uint8_t patternNr, uint8_t dataVersion)
 	// This means that loading old patterns with non-standard length, the length will be
 	// ignored and a standard length used. I think it's acceptable as long as users are aware of this.
 
-	UINT bytesRead;
-	uint8_t success=1; // start off succeeding
-	uint8_t next=0;
-
-	// ---------- Load step data first
-
-	// load step data
-
-
-
-	for(uint8_t trk=0; trk<NUM_TRACKS;trk++)
-	{
-
-		f_read((FIL*)&SDFile,(void*)&seq_patternSet.seq_subStepPattern[patternNr][trk][0],sizeof(Step)*STEPS_PER_PATTERN,&bytesRead);
-
-		if(bytesRead!=sizeof(Step)*(STEPS_PER_PATTERN))
-		{
-			success=0;
-			break; // file error, or we ran out of file (eof)
-		}
-
-		//Pattern V3 and up => flam added
-		if(dataVersion > 2)
-		{
-			f_read((FIL*)&SDFile,(void*)&seq_patternSet.seq_stepTiming[patternNr][trk][0],sizeof(uint8_t)*STEPS_PER_PATTERN,&bytesRead);
-
-			if(bytesRead!=sizeof(uint8_t)*(STEPS_PER_PATTERN))
-			{
-				success=0;
-				break; // file error, or we ran out of file (eof)
-			}
-		}
-
-	}
-
-
-
-	// ---------- load the main step data next
-	uint16_t mainStepData;
-
-
-		for(uint8_t trk=0; trk<NUM_TRACKS;trk++)
-		{
-			for(uint8_t bar=0;bar<NUM_BARS; bar++)
-			{
-				f_read((FIL*)&SDFile,(void*)&mainStepData,sizeof(uint16_t),&bytesRead);
-
-				if( bytesRead==sizeof(uint16_t)) {
-					seq_patternSet.seq_mainSteps[bar][patternNr][trk] = mainStepData;
-				}
-				 else {
-						success=0;
-						break;
-					}
-			}
-		}
-
-
-
-	// ------------ shuffle settings
-	if(success) {
-		//load the shuffle settings
-		f_read((FIL*)&SDFile,(void*)&seq_patternSet.shuffle[patternNr],sizeof(uint8_t),&bytesRead);
-		//and update on cortex
-		if(bytesRead)
-		{
-
-			//activeParameters[PAR_SHUFFLE] = seq_patternSet.shuffle[patternNr];
-			//frontPanel_sendData(SEQ_CC,SEQ_SHUFFLE,parameter_values[PAR_SHUFFLE]);
-
-			//seq_setShuffle(activeParameters[PAR_SHUFFLE]/127.f);
-		}
-		else {
-			success=0;
-		}
-	}
-
-	// ----------- Pattern/track lengths
-	// -- AS this might not exist in the saved data file, we still want success
-	if(success) {
-
-			for(uint8_t trk=0; trk<NUM_TRACKS;trk++)
-			{
-				f_read((FIL*)&SDFile,(void*)&next,sizeof(uint8_t),&bytesRead);
-				seq_patternSet.length[patternNr][trk] = preset_validLength(next);
-			}
-
-		success=1; // just to document that we don't consider this a failure, we just didn't read the bytes for this
-	}
-
-	if(dataVersion > 1)
-	{
-		f_read((FIL*)&SDFile,(void*)&seq_patternSet.kitNr[patternNr],sizeof(uint8_t),&bytesRead);
-		if(bytesRead == 0) success = 0;
-		preset_validateKitNr(patternNr);
-
-	}
-	if(success && dataVersion >= 4)
-	{
-		f_read((FIL*)&SDFile, seq_patternSet.seq_conditions[patternNr],
-				SEQ_CONDITION_BYTES, &bytesRead);
-		if(bytesRead != SEQ_CONDITION_BYTES) success = 0;
-	}
+	/* V3 added the timing block, V4 the trig conditions. Staged and then
+	   committed, so a truncated file leaves the pattern as it was, and a file
+	   from older firmware gets zeroed timing instead of the previous
+	   pattern's flams and shifts. */
+	const uint8_t success = preset_stagePatternBody(dataVersion > 2,
+			dataVersion >= 4);
+	if(success)
+		preset_commitPatternBody(patternNr);
 
 	return success;
 #endif
