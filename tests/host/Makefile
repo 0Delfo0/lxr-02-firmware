@@ -4,8 +4,19 @@
 #   make -C tests/host clean
 ROOT    := ../..
 CC      ?= cc
+
+# __fp16 is an ARM type: Reverb.c and Freeze.c use it, so on a non-ARM host the
+# tests did not compile at all and had to be skipped. _Float16 is the C23 type
+# with the same IEEE binary16 storage format, and like __fp16 on Cortex-M7 it is
+# computed by converting to float, so the results match. Defined only where the
+# compiler does not already know __fp16.
+FP16 := $(shell echo '__fp16 x;' | $(CC) -xc -c -o /dev/null - 2>/dev/null || echo -D__fp16=_Float16)
+
+# The target has unsigned plain char (arm-none-eabi defines __CHAR_UNSIGNED__),
+# x86 has signed. The firmware uses plain char for file names and FatFs paths,
+# so the host build matches the target instead of the host.
 CFLAGS  ?= -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined
-CFLAGS  += -I$(ROOT)/Core/Inc
+CFLAGS  += -I$(ROOT)/Core/Inc -funsigned-char $(FP16)
 BUILD   := build
 
 .PHONY: test clean
