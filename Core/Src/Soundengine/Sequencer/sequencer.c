@@ -1604,6 +1604,12 @@ void seq_setExtSync(uint8_t isExt)
 //------------------------------------------------------------------------------
 void seq_armAutomationStep(uint8_t stepNr, uint8_t track,uint8_t isArmed)
 {
+	/* The number arrives from the front panel as a 7-bit byte
+	   (CortexParser.c:580) and is used to index seq_subStepPattern's 64 steps
+	   and NUM_TRACKS tracks in seq_recordAutomation(). One guard here covers
+	   every path that can arm a step, which is why it is not in the callers. */
+	if(stepNr >= NUM_STEPS || track >= NUM_TRACKS)
+		isArmed = 0;
 	if(isArmed) {
 		seq_armedArmedAutomationStep 	= stepNr;
 		seq_armedArmedAutomationTrack 	= track;
