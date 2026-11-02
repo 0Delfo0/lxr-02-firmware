@@ -1359,6 +1359,13 @@ IN_ITCM_RAM void seq_nextStep()
 			{
 				//reset to song start
 				seq_pendingPattern = seq_activeSong[0];
+				/* The same clamp the SONG_END branch above has, and for the same
+				   reason. seq_activeSong[0] can itself be a marker - SONG_END is
+				   64 and SONG_LOOP is 65, while the pattern arrays are
+				   [MAX_PATTERN] = [64] - so a song whose first entry is a marker
+				   made seq_setPendingPatternActive() below index one or two past
+				   the end of seq_patternSet and write there. */
+				if(seq_pendingPattern >= MAX_PATTERN) seq_pendingPattern = 0;
 				seq_songPositionPointer = 0;
 			}
 
