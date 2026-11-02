@@ -209,3 +209,51 @@ technical:
 - **D4**: an atomic save needs twice the free space and fails earlier on a nearly full card, in exchange
   for never destroying a project it has not replaced.
 - **D8**: declining #4 means writing down that pulling the card during an access hangs the unit.
+
+---
+
+## What was done, 2026-11-02
+
+The nine decisions were taken as recommended. The order above was followed. Where measuring changed the
+answer, it is recorded here rather than left in the issue.
+
+| step | issues | state | cost against the `main` it was measured on |
+|---|---|---|---|
+| 1 | #72 | in `main` (emulator lane) | - |
+| 2 | #73, #70, D2, D3 | in `main` | see #73 |
+| 3 | #69 | in `main` | see #69 |
+| 4 | #65, D4 | in `main` | see #65 |
+| 5 | #8, D5 | in `main` | 0 in every region |
+| 6 | **#91** | in `main` | FLASH +80 B |
+| 6 | **#90** | branch, awaiting the device test | FLASH +136 B |
+| 6 | **#89** | branch, awaiting the device test | RAM +3,824 B, FLASH **-136 B** |
+| 7 | **#24** | branch, awaiting the device test | FLASH +32 B |
+| 8 | **#88** | branch, awaiting the device test | FLASH +264 B |
+| 9 | #4, D8 | documented in `docs/known-issues.md`, closed; the work is #100 | - |
+
+The four branches are on one image, `test/hw-session-3`, and the session sheet is `TEST-SESSION-2.md` in
+the workspace repository. Combined: ITCM and DTCM unchanged, RAM +3,824 B, FLASH +296 B.
+
+**D6's open sub-decision is settled: the staging buffer is a 3,817-byte `static` in `presetManager.c`**, so
+the RAM region, measured at +3,824 B with alignment. Not the stack, because both readers run from the menu
+and from `preset_loadProject()`; not `sx_patternBuf` or `seq_tmpPattern`, because either would couple a
+card read to the SysEx path or to the pattern edit buffer. Flash went *down* by 136 B in the same change:
+two inlined readers became one staged reader plus one commit.
+
+Three things measuring changed:
+
+- **#90's per-field range check was dropped.** `docs/params.json` disagrees with the data Erica ships:
+  all six factory projects carry `PAR_MIDI_CHAN_GLOBAL = 0` where that file says 1-16, `PROJ05` carries
+  `PAR_MIDI_NOTE2 = 0`, and `buttonHandler.c:1178` stores `SKIP_NEXT_KIT_AUTOLOAD` (2) in
+  `PAR_PATTERN_MODE`, which it calls a 0-1 menu. A clamp built from that file would have rewritten valid
+  cards. No global is used as an array index anywhere in `Core/Src`, so there is no memory-safety reason to
+  insist. The staging - apply nothing unless the whole file is there - is the whole fix.
+- **#90's second half was already fixed in this fork.** openelixir's "defaults written but not applied"
+  does not apply: `main.c` calls `preset_createGlobals()`, which applies them as well as writing them.
+- **#4's description was wrong about what hangs.** `SD_TIMEOUT` is effectively infinite, but the lockup is
+  the two unbounded `while(BSP_SD_GetCardState() != MSD_OK)` loops at `sd_diskio.c:157,188` in a file with
+  no `HAL_GetTick()` at all. "Use a finite timeout" would not have fixed it.
+
+And one new issue came out of the measurements: **#99**, a track length of 0 - which the firmware itself
+writes, see #23 - is a modulo by zero at three of the eight sites that use a length. #91 deliberately
+leaves 0 alone so that defect stays visible where it belongs, in the sequencer.
