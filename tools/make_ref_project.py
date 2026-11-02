@@ -105,7 +105,7 @@ SOUND_RULES = {
 }
 
 GLOBAL_RULES = {
-    "PAR_BPM": (120, "internal tempo, pending the measurement in issue #81. Over SysEx `PARAM_SET` the sync mode does not follow the value - measured three times during #1 - but a project load is a different path: `preset_loadGlobals()` calls `menu_sendAllGlobals()`, and `menu_parseGlobalParam(PAR_BPM)` sends `frontPanel_sendData(SET_BPM, ...)`, which is the very message `CortexParser.c:648-662` turns into `seq_setExtSync()`. So a project may well be able to carry `MID` after all. Read from the source, not yet measured, so the value stays at the internal tempo and the mode is set by hand: SHIFT + step 12, pot 1"),
+    "PAR_BPM": (1, "**`MID`, external MIDI sync**, so the project arrives ready for host-driven measurement. Measured in #81: a project load does carry the sync mode, because `preset_loadGlobals()` -> `menu_sendAllGlobals()` -> `menu_parseGlobalParam(PAR_BPM, ...)` sends `frontPanel_sendData(SET_BPM, ...)`, the front-panel message `CortexParser.c:648-662` turns into `seq_setExtSync()`. SysEx `PARAM_SET` cannot, which is why the opposite was believed for a while. Verified end to end: with the panel on `EXT` beforehand, loading this project put `PAR_BPM` at 1 and the sequencer then ran from a clock sent over USB. **The trade-off:** with `MID` the internal clock is off, so START on the panel does nothing until a clock arrives - right for a measurement project, confusing if you pick the unit up to play it, in which case turn pot 1 up on the config page"),
     "PAR_MIDI_CHAN_1": (1, "every voice on channel 1, so one channel reaches everything"),
     "PAR_MIDI_CHAN_2": (1, "as above"),
     "PAR_MIDI_CHAN_3": (1, "as above"),
@@ -184,12 +184,16 @@ def global_values(doc):
 
 
 def name8(text):
-    # Space padded, not NUL padded: the firmware keeps names in savefileNames[]
-    # padded with 0x20, so a NUL-padded file comes back from a SysEx dump with
-    # spaces and a byte-for-byte comparison of a round trip fails on the
-    # padding alone. Measured: a name written as b"REF\0\0\0\0\0" is dumped
-    # as b"REF     ".
-    return text.encode("ascii", "replace")[:8].ljust(8, b" ")
+    # NUL padded, which is what the firmware writes. Read off the card after the
+    # firmware had saved the whole project itself: PROJ63/00-REF.SND carries
+    # b"REF\0\0\0\0\0".
+    #   A SysEx *dump* of a pattern does come back space padded, and that was
+    # briefly taken for the file format. It is not: sx_copyName() normalises the
+    # name on the SysEx receive path, so only the slot written that way is
+    # affected. The file names on the card prove it - that slot is
+    # "00-REF__.PAT", the underscores being the spaces encoded by the 8.3 naming
+    # rule, while every other slot is "NN-REF.PAT". See issue #96.
+    return text.encode("ascii", "replace")[:8].ljust(8, b"\x00")
 
 
 def build_snd(doc, sv):
@@ -314,9 +318,10 @@ def manifest(doc, sv, gv, slot):
         "",
         f"1. Copy `PROJ{slot:02d}/` to the root of the test card.",
         f"2. On the device, hold **LOAD** + **step 11**, turn the encoder to **{slot}**, press the encoder.",
-        "3. If the test needs the sequencer driven from the laptop, set the sync mode by hand:",
-        "   **SHIFT + step 12**, then **pot 1** until the BPM field reads **`MID`**. A project cannot do",
-        "   this - writing `PAR_BPM` anywhere but the panel does not call `seq_setExtSync()`.",
+        "3. The sync mode comes with the project: after the load the BPM field reads **`MID`** and a clock",
+        "   sent over USB drives the sequencer - measured in #81. Nothing to set by hand.",
+        "   To play the unit from its own clock instead, turn **pot 1** up on the config page",
+        "   (**SHIFT + step 12**); with `MID` the internal clock is off and START waits for a clock.",
         "4. Verify before measuring: `python3 tools/check_ref_project.py` reads every parameter back over",
         "   SysEx and diffs it against this manifest.",
         "",
