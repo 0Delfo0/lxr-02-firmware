@@ -2437,6 +2437,12 @@ FRESULT preset_createProject(uint8_t presetNr)
    "save" because the load paths use the same clean-up. */
 /* Remove a folder and everything in it. Missing counts as success: the callers
    use it to clear leftovers that are normally not there. */
+/* Set while a project save is writing into /projNNn, so that any of the save's
+   many failure exits leaves nothing behind: preset_abortSdOperation() removes
+   it. Without this a failed save left a part-written /projNNn on the card,
+   holding the space it had used until the next save cleared it. */
+static char preset_pendingNewFolder[13] = "";
+
 static FRESULT preset_removeFolder(const char *path)
 {
 	FILINFO fno;
@@ -2462,6 +2468,12 @@ static void preset_recoverInterruptedSave(uint8_t presetNr)
 
 static FRESULT preset_abortSdOperation(FRESULT res)
 {
+	if(preset_pendingNewFolder[0])
+	{
+		f_chdir("/");
+		preset_removeFolder(preset_pendingNewFolder);
+		preset_pendingNewFolder[0] = 0;
+	}
 	lcd_process_display_interrupt = 1;
 	preset_initTmpFolder();
 #if USE_INTERRUPT_ONLY_DURING_SAVE_PROJ
@@ -2535,6 +2547,8 @@ FRESULT preset_saveProject(uint8_t presetNr)
 		res = f_chdir(newFolder);
 	if(res != FR_OK)
 		return preset_abortSdOperation(res);
+	/* from here on a failure must take /projNNn with it */
+	sprintf(preset_pendingNewFolder, "%s", newFolder);
 	//save data
 
 #if 1
@@ -2629,6 +2643,8 @@ FRESULT preset_saveProject(uint8_t presetNr)
 		f_rename(oldFolder, currentFolder);	//put the old one back
 		return preset_abortSdOperation(res);
 	}
+
+	preset_pendingNewFolder[0] = 0;	//it is /projNN now, not a leftover
 
 	/* The save has succeeded by now; failing to remove the previous copy costs
 	   space and nothing else, so it does not fail the save. */
