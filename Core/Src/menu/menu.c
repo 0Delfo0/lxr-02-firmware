@@ -2074,9 +2074,45 @@ void menu_showSdError(uint8_t res)
 			lcd_string("File not found!");
 			break;
 
-		default:
-			lcd_string("unknown!");
+		/* The card is full. FatFs reports that from f_write() as FR_OK with a
+		   short count, and preset_fwrite() turns it into FR_DENIED, so this is
+		   the message a save onto a full card produces. It used to say
+		   "Disk error!", which reads as a failing card for the single most
+		   likely cause of a failed save. 16 columns, so "Card full!" it is. */
+		case FR_DENIED:
+			lcd_string("Card full!");
 			break;
+
+		/* The card's own write-protect, or a read-only mount. */
+		case FR_WRITE_PROTECTED:
+			lcd_string("Write protect!");
+			break;
+
+		/* A folder in the path is missing - a project folder that was removed
+		   while the unit was off, for instance. */
+		case FR_NO_PATH:
+			lcd_string("Path not found!");
+			break;
+
+		/* The volume is not mounted, which on this firmware means the card was
+		   pulled since boot. */
+		case FR_NOT_ENABLED:
+		case FR_INVALID_DRIVE:
+			lcd_string("Card removed!");
+			break;
+
+		default:
+			/* Still reachable - FatFs has 19 result codes - so show the number
+			   rather than only the word, which gives something to look up. */
+		{
+			/* Still reachable - FatFs has 19 result codes - so show the number
+			   as well as the word, which gives something to look up. */
+			char code[4] = {0};
+			numtostrpu(code, res, ' ');
+			lcd_string("unknown: ");
+			lcd_string(code);
+			break;
+		}
 
 	}
 	HAL_Delay(2000);
