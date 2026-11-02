@@ -18,6 +18,7 @@
 #include "ff.h"
 #include "Preset/PresetManager.h"
 #include "card_fill.h"
+#include "menu/menu.h"
 
 static const char *fr(FRESULT r)
 {
@@ -99,6 +100,28 @@ int main(void)
 	if (res == FR_OK) {
 		puts("    FAIL - preset_saveGlobals() reported success on a full card");
 		failures++;
+	}
+
+	/* 4. The other half of #70: what the user is shown. menu_showSdError() is
+	 *    what buttonHandler calls when a save fails, and the emulated LCD can be
+	 *    read, so the message needs no hardware to check. */
+	printf("\n4. the screen for each result code\n");
+	static const struct { uint8_t code; const char *name; } codes[] = {
+		{ FR_DENIED,          "FR_DENIED (a full card)" },
+		{ FR_DISK_ERR,        "FR_DISK_ERR" },
+		{ FR_NOT_READY,       "FR_NOT_READY" },
+		{ FR_WRITE_PROTECTED, "FR_WRITE_PROTECTED" },
+		{ FR_NO_PATH,         "FR_NO_PATH" },
+		{ FR_INVALID_OBJECT,  "FR_INVALID_OBJECT (unnamed)" },
+	};
+	for (unsigned i = 0; i < sizeof codes / sizeof codes[0]; i++) {
+		menu_showSdError(codes[i].code);
+		const char *lcd = lxr_get_lcd();
+		printf("    %-28s -> \"%.16s\" / \"%.16s\"\n", codes[i].name, lcd, lcd + 16);
+		if (codes[i].code == FR_DENIED && strncmp(lcd + 16, "Card full!", 10) != 0) {
+			puts("    FAIL - a full card is not reported as full");
+			failures++;
+		}
 	}
 
 	printf("\n%s\n", failures ? "FAILURES" : "done");
