@@ -106,6 +106,8 @@ static FRESULT preset_fopenWrite(FIL *file, const char *path);
 static FRESULT preset_fwrite(FIL *file, const void *data, UINT size);
 static FRESULT preset_fcloseWrite(FIL *file);
 static FRESULT preset_abortSdOperation(FRESULT res);
+static FRESULT preset_removeFolder(const char *path);
+static void preset_recoverInterruptedSave(uint8_t presetNr);
 
 //static void preset_makeFileNameTemp(char *buf, uint8_t num, uint8_t type);
 
@@ -2433,8 +2435,45 @@ FRESULT preset_createProject(uint8_t presetNr)
    identical copies of this - which is why the globals save had no check at all,
    since adding one meant a ninth. The name says "SD operation" rather than
    "save" because the load paths use the same clean-up. */
+/* Remove a folder and everything in it. Missing counts as success: the callers
+   use it to clear leftovers that are normally not there. */
+/* Set while a project save is writing into /projNNn, so that any of the save's
+   many failure exits leaves nothing behind: preset_abortSdOperation() removes
+   it. Without this a failed save left a part-written /projNNn on the card,
+   holding the space it had used until the next save cleared it. */
+static char preset_pendingNewFolder[13] = "";
+
+static FRESULT preset_removeFolder(const char *path)
+{
+	FILINFO fno;
+	if(f_stat(path, &fno) != FR_OK)
+		return FR_OK;
+	sprintf(emptyDirPath, "%s", path);
+	return delete_node(emptyDirPath, sizeof emptyDirPath / sizeof emptyDirPath[0], &fno);
+}
+
+/* A project save swaps two folders, and between the two renames /projNN does
+   not exist. If the power goes at that moment the data is in /projNNo, so put
+   it back the next time anything looks for the project. Costs one f_stat on a
+   path that is normally absent. */
+static void preset_recoverInterruptedSave(uint8_t presetNr)
+{
+	FILINFO fno;
+	char projFolder[13], oldFolder[13];
+	sprintf(projFolder, "/proj%02d", presetNr);
+	sprintf(oldFolder, "/proj%02do", presetNr);
+	if(f_stat(projFolder, &fno) == FR_NO_FILE && f_stat(oldFolder, &fno) == FR_OK)
+		f_rename(oldFolder, projFolder);
+}
+
 static FRESULT preset_abortSdOperation(FRESULT res)
 {
+	if(preset_pendingNewFolder[0])
+	{
+		f_chdir("/");
+		preset_removeFolder(preset_pendingNewFolder);
+		preset_pendingNewFolder[0] = 0;
+	}
 	lcd_process_display_interrupt = 1;
 	preset_initTmpFolder();
 #if USE_INTERRUPT_ONLY_DURING_SAVE_PROJ
@@ -2447,6 +2486,7 @@ FRESULT preset_saveProject(uint8_t presetNr)
 {
 	FRESULT res;
 	FILINFO fno;
+	char newFolder[13], oldFolder[13];
 
 	preset_saveDrumsetRam(menu_selectedPresetNr[SAVE_TYPE_KIT], 0);
 	preset_savePatternRAM(seq_activePattern);
@@ -2476,61 +2516,39 @@ FRESULT preset_saveProject(uint8_t presetNr)
 	}
 */
 	//change project folder
+	/* The project is written into /projNNn and only becomes /projNN once every
+	   file is on the card, so a save that fails - a full card, a card pulled -
+	   leaves the project that was there untouched. It used to empty /projNN
+	   first and write into it, which destroyed the destination before the
+	   replacement existed (#65).
+
+	   Three names are in play:
+	     /projNN   the project, as everything else knows it
+	     /projNNn  the one being written
+	     /projNNo  the previous one, between the two renames at the end
+	   All of them are 8.3 names, which FatFs needs here (_USE_LFN 0). */
 	sprintf(currentFolder, "/proj%02d", presetNr);
+	sprintf(newFolder, "/proj%02dn", presetNr);
+	sprintf(oldFolder, "/proj%02do", presetNr);
 
-	res = f_stat(currentFolder, &fno);
-	if(res == FR_NO_FILE)
-	{
+	/* Leftovers from a save that did not finish. */
+	res = preset_removeFolder(newFolder);
+	if(res == FR_OK)
+		res = preset_removeFolder(oldFolder);
+
+	/* A project that does not exist yet gets its folder now, so the rename at
+	   the end always has something to move aside. */
+	if(res == FR_OK && f_stat(currentFolder, &fno) == FR_NO_FILE)
 		res = f_mkdir(currentFolder);
-		if(res == FR_OK)
-		{
-			f_chdir(currentFolder);
-		}
-		else
-		{
-			lcd_process_display_interrupt = 1;
-			preset_initTmpFolder();
-#if USE_INTERRUPT_ONLY_DURING_SAVE_PROJ
-			HAL_TIM_Base_Stop_IT(&htim2);	//calc sample interrupt - prio 1
-#else
 
-#endif
-
-
-			return res;
-		}
-	}
-	else
-	{
-		sprintf(emptyDirPath, "%s", currentFolder);
-		res = empty_directory(emptyDirPath, sizeof emptyDirPath / sizeof emptyDirPath[0]);
-		if(res != FR_OK)
-		{
-			lcd_process_display_interrupt = 1;
-			preset_initTmpFolder();
-#if USE_INTERRUPT_ONLY_DURING_SAVE_PROJ
-			HAL_TIM_Base_Stop_IT(&htim2);	//calc sample interrupt - prio 1
-#else
-
-#endif
-
-			return res;
-		}
-
-		res = f_chdir(currentFolder);
-		if(res != FR_OK)
-		{
-			lcd_process_display_interrupt = 1;
-			preset_initTmpFolder();
-#if USE_INTERRUPT_ONLY_DURING_SAVE_PROJ
-			HAL_TIM_Base_Stop_IT(&htim2);	//calc sample interrupt - prio 1
-#else
-
-#endif
-
-			return res;
-		};
-	}
+	if(res == FR_OK)
+		res = f_mkdir(newFolder);
+	if(res == FR_OK)
+		res = f_chdir(newFolder);
+	if(res != FR_OK)
+		return preset_abortSdOperation(res);
+	/* from here on a failure must take /projNNn with it */
+	sprintf(preset_pendingNewFolder, "%s", newFolder);
 	//save data
 
 #if 1
@@ -2607,6 +2625,30 @@ FRESULT preset_saveProject(uint8_t presetNr)
 			return preset_abortSdOperation(res);
 		}
 	}
+
+	/* Everything is written. Swap the folders: the project that was there stays
+	   until the new one has taken its place, and if the second rename fails the
+	   first is undone so /projNN still exists. Between the two renames /projNN
+	   is absent - preset_recoverInterruptedSave() puts /projNNo back if the
+	   power goes exactly there. */
+	res = f_chdir("/");
+	if(res == FR_OK)
+		res = f_rename(currentFolder, oldFolder);
+	if(res != FR_OK)
+		return preset_abortSdOperation(res);
+
+	res = f_rename(newFolder, currentFolder);
+	if(res != FR_OK)
+	{
+		f_rename(oldFolder, currentFolder);	//put the old one back
+		return preset_abortSdOperation(res);
+	}
+
+	preset_pendingNewFolder[0] = 0;	//it is /projNN now, not a leftover
+
+	/* The save has succeeded by now; failing to remove the previous copy costs
+	   space and nothing else, so it does not fail the save. */
+	preset_removeFolder(oldFolder);
 
 	lcd_process_display_interrupt = 1;
 	preset_initTmpFolder();
@@ -2777,6 +2819,9 @@ void preset_loadProjectNames(uint8_t projectNr)
 	FILINFO fno;
 
 	//change project folder
+	/* If a save was interrupted between its two renames, /projNN is missing
+	   and the data is in /projNNo. Put it back before looking for it. */
+	preset_recoverInterruptedSave(projectNr);
 	sprintf(currentFolder, "/proj%02d", projectNr);
 
 	res = f_stat(currentFolder, &fno);
@@ -2851,6 +2896,8 @@ FRESULT preset_loadProject(uint8_t presetNr, uint8_t clearTmp)
 	lcd_string(PSTR("0%"));
 
 	//change project folder
+	/* Same recovery as above, for this load path. */
+	preset_recoverInterruptedSave(presetNr);
 	sprintf(currentFolder, "/proj%02d", presetNr);
 
 	res = f_stat(currentFolder, &fno);
