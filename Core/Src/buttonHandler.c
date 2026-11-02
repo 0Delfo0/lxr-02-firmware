@@ -92,6 +92,13 @@ volatile static int8_t buttonHandler_armedAutomationStep = NO_STEP_SELECTED;
 
 //--------------------------------------------------------
 static void buttonHandler_armTimerActionStep(int8_t stepNr) {
+	/* Everything below indexes seq_subStepPattern's NUM_STEPS entries with
+	   this number, and the bytes it reads there become a parameter number and
+	   a value - so an out-of-range step does not only read past the track, it
+	   then writes a garbage value into whatever parameter those bytes name.
+	   The callers are bounded, this is the backstop. */
+	if(stepNr < 0 || stepNr >= NUM_STEPS)
+		return;
 #if 0
 	//check if sub or main step
 	const uint8_t isMainStep = ((stepNr % 8) == 0);
@@ -1463,12 +1470,17 @@ static void buttonHandler_selectButtonPressed(uint8_t partNr)
 		// if shift is held and a part button is held down, we will enter automation record mode
 		// for that sub-step on the currently selected step.
 		// if shift is not held, we just do normal handling
-		if ( buttonHandler_stateMemory.selectButtonMode == SELECT_MODE_VOICE && buttonHandler_getShift()) {
-			//TODO hier muss selektiert werden!
-			buttonHandler_setTimeraction((uint8_t)(buttonHandler_selectedStep * 8 + partNr));
-		} else {
-			buttonHandler_handleSelectButton(partNr);
-		}
+		/* SHIFT + a held select button used to arm automation on
+		   buttonHandler_selectedStep * 8 + partNr. That is the v1 sub-step
+		   formula: with a step selected in the upper half of a bar it gives
+		   64 to 127, and the armed number ends up indexing
+		   seq_subStepPattern[...][NUM_STEPS] in seq_recordAutomation()
+		   (sequencer.c:2474), which has 64 entries - so turning a pot wrote
+		   up to 63 Step structures into the next track. The gesture never did
+		   what its own comment said either: the step it armed was not the one
+		   selected. Removed rather than given a new meaning, which would be a
+		   feature decision. */
+		buttonHandler_handleSelectButton(partNr);
 
 	}
 
