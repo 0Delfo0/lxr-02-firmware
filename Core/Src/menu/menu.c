@@ -3322,6 +3322,15 @@ void menu_resetSaveParameters()
 // if its the global menu, and there are multiple pages will toggle to the next page
 void menu_switchSubPage(uint8_t subPageNr, uint8_t toggle)
 {
+	/* menuPages has NUM_SUB_PAGES rows, and menuIndex packs the sub-page in
+	   five bits, so an out-of-range number does not merely miss - it reads
+	   somewhere between row 8 and row 31. The FX page is how that happens
+	   without a faulty gesture: buttonHandler.c:893 passes fxBus.fxType
+	   straight through, and that is written by any CC, NRPN or modulation
+	   target, none of which clamp to the seven FX types. One guard here
+	   covers every caller. */
+	if(subPageNr >= NUM_SUB_PAGES)
+		subPageNr = 0;
 	//leave edit mode if active
 	editModeActive = 0;
 
