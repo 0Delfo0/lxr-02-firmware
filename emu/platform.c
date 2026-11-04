@@ -21,6 +21,7 @@
 #include "fatfs.h"
 #include "lcd.h"
 #include "menu/menu.h"
+#include "Sysex/SysexHandler.h"
 #include "IO/DIO.h"
 #include "menu/screensaver.h"
 #include "menu/copyClearTools.h"
@@ -442,6 +443,7 @@ int emu_boot(const emu_boot_opts *opts)
 
 	lastSdState = BSP_SD_IsDetected();
 	buttonHandler_init();
+	sysex_init();		/* main.c:935 */
 
 	preset_initTmpFolder();
 	loadTmpFolderFiles();
@@ -492,6 +494,12 @@ void emu_main_loop_iteration(void)
 	MidiMsg msg;
 	if (usb_getMidi(&msg)) midiParser_parseMidiMessage(msg);
 	uart_processMidi();
+	/* The firmware's main loop has this between uart_processMidi() and
+	   preset_processTimer() (main.c:1011). Without it the SysEx handler
+	   accumulates request bytes in its ring and never answers, so no SysEx
+	   command can be tested on the host - which is how #77 was nearly
+	   reported as a firmware fault. */
+	sysex_tick();
 	preset_processTimer();
 
 	uart_drain_tx();
