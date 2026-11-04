@@ -513,12 +513,22 @@ void seq_triggerVoice(uint8_t voiceNr, uint8_t vol, uint8_t note)
 
 	if(voiceNr > 6) return;
 
+	/* The step index is -1 while the sequencer is stopped, and a voice can be
+	   triggered then: by the roll (seq_setRoll), and over SysEx since #77.
+	   Indexing the step array with it reads one Step before the array - ASan
+	   reports a global-buffer-overflow four bytes before seq_patternSet - so
+	   the automation of "the current step" is only applied when there is a
+	   current step. */
+	const int8_t seq_triggerStep = seq_stepIndex[voiceNr];
 
+	if(seq_triggerStep >= 0)
+	{
 #if USE_PATTERN_EDIT_BUFFER
-	seq_parseAutomationNodes(voiceNr, &patternBackupBuffer.seq_subStepPattern[voiceNr][seq_stepIndex[voiceNr]]);
+		seq_parseAutomationNodes(voiceNr, &patternBackupBuffer.seq_subStepPattern[voiceNr][seq_triggerStep]);
 #else
-	seq_parseAutomationNodes(voiceNr, &seq_patternSet.seq_subStepPattern[seq_activePattern][voiceNr][seq_stepIndex[voiceNr]]);
+		seq_parseAutomationNodes(voiceNr, &seq_patternSet.seq_subStepPattern[seq_activePattern][voiceNr][seq_triggerStep]);
 #endif
+	}
 
 	//turn the trigger off before sending the next one
 	/*
@@ -551,9 +561,15 @@ void seq_triggerVoice(uint8_t voiceNr, uint8_t vol, uint8_t note)
 
 	//send the new note to midi/usb out
 #if USE_PATTERN_EDIT_BUFFER
-	seq_sendMidiNoteOn(midiChan, midiNote, patternBackupBuffer.seq_subStepPattern[voiceNr][seq_stepIndex[voiceNr]].volume&STEP_VOLUME_MASK);
+	/* Same reason: with no current step the velocity is the one the caller
+	   asked for, not one read from before the array. */
+	seq_sendMidiNoteOn(midiChan, midiNote, seq_triggerStep >= 0
+			? (patternBackupBuffer.seq_subStepPattern[voiceNr][seq_triggerStep].volume&STEP_VOLUME_MASK)
+			: vol);
 #else
-	seq_sendMidiNoteOn(midiChan, midiNote, seq_patternSet.seq_subStepPattern[seq_activePattern][voiceNr][seq_stepIndex[voiceNr]].volume&STEP_VOLUME_MASK);
+	seq_sendMidiNoteOn(midiChan, midiNote, seq_triggerStep >= 0
+			? (seq_patternSet.seq_subStepPattern[seq_activePattern][voiceNr][seq_triggerStep].volume&STEP_VOLUME_MASK)
+			: vol);
 #endif
 }
 //------------------------------------------------------------------------------
@@ -2450,10 +2466,15 @@ uint8_t seq_isAutomationStepArmed()
 //------------------------------------------------------------------------
 void seq_recordAutomation(uint8_t voice, uint8_t dest, uint8_t value)
 {
-	if(seq_recordActive)
+	/* seq_recordActive without seq_running is a real state - REC armed, the
+	   sequencer stopped - and the step index is -1 there. It used to be
+	   assigned to a uint8_t, so it became 255: seq_intIsMainStepActive() then
+	   asked for bar 15 of 4, and if that happened to answer yes the write
+	   below landed on step 255 of a 64-step track. */
+	if(seq_recordActive && seq_stepIndex[voice] >= 0)
 	{
 		//uint8_t quantizedStep = seq_quantize(seq_stepIndex[voice]);
-		const uint8_t step = seq_stepIndex[voice];
+		const uint8_t step = (uint8_t)seq_stepIndex[voice];
 
 		//only record to active steps
 		/*
