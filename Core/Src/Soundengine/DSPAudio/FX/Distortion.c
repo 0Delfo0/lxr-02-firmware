@@ -139,6 +139,13 @@ float diode(float in)
 	//float index = (in+4.2f) * 30.47f; // [0:256]
 
 	uint16_t itg = (int16_t) index;
+	/* index reaches 256 when in is at the rail, and the lerp reads itg+1 -
+	   element 257 of a 257-element table. Clamping the index before frac is
+	   computed keeps the result exact rather than merely safe: at index 256
+	   frac becomes 1.0, so the lerp returns table_1n914[256], the value the
+	   old code was reaching for. */
+	if(itg > 255)
+		itg = 255;
 	float frac = index - itg;
 	return lerp(table_1n914[itg], table_1n914[itg+1], frac);
 
