@@ -457,9 +457,15 @@ IN_ITCM_RAM void calcWavetableOscBlock(OscInfo* osc, const int16_t table[][1024]
 			uint32_t  itg	= oscPhase>>22;
 		#if INTERPOLATE_OSC
 			//todo use ldm instead of ldr to load multiple values from memory
-			oscOut = table[osc->tableOffset][itg++];
+			oscOut = table[osc->tableOffset][itg];
 			//const float frac = (itg&0x003FFFFF)*2.38418579101562e-07f; //2.38... => 1.f/0x3fffff
 			//oscOut += frac*(table[osc->tableOffset][itg] - oscOut);
+			/* The phase wraps, so the sample after 1023 is 0 of the same row.
+			   The post-increment this replaces read index 1024 of a
+			   1024-element row: for every row but the last that is the first
+			   sample of the *next* waveform, and for the last it is past the
+			   table. */
+			itg = (itg + 1u) & 0x3FFu;
 			uint32_t frac = oscPhase & 0x3FFFFF;
 			oscOut = oscOut + (int16_t)(((int64_t)(table[osc->tableOffset][itg] - oscOut) * frac)   >>22);
 		#else
