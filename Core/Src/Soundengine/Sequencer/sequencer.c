@@ -842,13 +842,26 @@ IN_ITCM_RAM void seq_setPendingPatternActive()
 }
 
 
+/* A stored track length of 0 means 16. The Euclidean generator writes it that
+   way (#23) and .pat files on the card carry it, so it is a value to read, not
+   a value to reject - which is why preset_validLength() in presetManager.c
+   leaves it alone. Five sites remapped it with their own
+   "if(length == 0) length = 16"; three did not, and used it as a divisor or as
+   a step number: sequencer.c took (step+1) % 0 and length-1 = 255. One
+   accessor, so the rule is in one place. */
+__attribute__((noinline)) static uint8_t seq_trackLength(uint8_t pattern, uint8_t track)
+{
+	const uint8_t length = seq_patternSet.length[pattern][track];
+	return length ? length : 16;
+}
+//------------------------------------------------------------------------------
 uint8_t seq_getLongestTrack()
 {
 	uint8_t trackId = 0;
 
 	for(int i=1;i<NUM_TRACKS;i++)
 	{
-		if(seq_patternSet.length[seq_activePattern][i] > seq_patternSet.length[seq_activePattern][trackId])
+		if(seq_trackLength(seq_activePattern, i) > seq_trackLength(seq_activePattern, trackId))
 		{
 			trackId = i;
 		}
@@ -1140,7 +1153,7 @@ void seq_processFlam(uint8_t idx)
 		{
 			//pattern takes main step active and probability into account
 #if 1
-			const uint8_t length = seq_patternSet.length[seq_activePattern][track];
+			const uint8_t length = seq_trackLength(seq_activePattern, track);
 			const uint8_t currentStep = seq_stepIndex[track];
 			const uint8_t nextStep = (seq_stepIndex[track]+1)%length;
 			const uint8_t prevStep = seq_stepIndex[track] != 0 ? seq_stepIndex[track] - 1 : length-1;
@@ -1205,7 +1218,7 @@ void seq_processFlam(uint8_t idx)
 
 
 					uint8_t flamCurrentStep = seq_patternSet.seq_stepTiming[seq_activePattern][track][seq_stepIndex[track]]+1;
-					uint8_t length = patternSet->length[seq_activePattern][track];
+					uint8_t length = seq_trackLength(seq_activePattern, track);
 					uint8_t flamNextStep = seq_patternSet.seq_stepTiming[seq_activePattern][track][(seq_stepIndex[track]+1)%length]+1;
 					uint8_t shift = 0;
 					switch(flamCurrentStep)
@@ -1299,8 +1312,7 @@ IN_ITCM_RAM void seq_nextStep()
 	{
 		for(uint8_t i = 0; i < NUM_TRACKS; i++)
 		{
-			uint8_t length = seq_patternSet.length[seq_activePattern][i];
-			if(length == 0) length = 16;
+			const uint8_t length = seq_trackLength(seq_activePattern, i);
 			seq_stepIndex[i] = (int8_t)((seq_repeatStart[i] + seq_repeatPhase
 					+ length - 1u) % length);
 		}
@@ -1313,9 +1325,7 @@ IN_ITCM_RAM void seq_nextStep()
 	uint8_t longestTrack;
 
 	longestTrack = seq_getLongestTrack();
-	seqlen=seq_patternSet.length[seq_activePattern][longestTrack];
-	if(!seqlen)
-		seqlen=16;
+	seqlen=seq_trackLength(seq_activePattern, longestTrack);
 
 	if( (((seq_stepIndex[longestTrack]+1) & 0x3f) == 0) || ((seq_stepIndex[longestTrack]+1) >= seqlen))
 			//(((seq_patternSet.seq_subStepPattern[seq_activePattern][0][seq_stepIndex[0]+1]).note & PATTERN_END)) )
@@ -1410,9 +1420,7 @@ IN_ITCM_RAM void seq_nextStep()
 		//check if track end is reached
 
 		// **PATROT we now use this for length
-		seqlen=seq_patternSet.length[seq_activePattern][i];
-		if(!seqlen)
-			seqlen=16;
+		seqlen=seq_trackLength(seq_activePattern, i);
 
 		if((seq_stepIndex[i]) >= seqlen || (seq_stepIndex[i] & 0x3f) == 0)
 		{
@@ -1521,8 +1529,7 @@ IN_ITCM_RAM void seq_nextStep()
 	{
 		for(uint8_t track = 0; track < NUM_TRACKS; track++)
 		{
-			uint8_t length = seq_patternSet.length[seq_activePattern][track];
-			if(length == 0) length = 16;
+			const uint8_t length = seq_trackLength(seq_activePattern, track);
 			seq_repeatResume[track]++;
 			if(seq_repeatResume[track] >= length)
 			{
@@ -1639,9 +1646,7 @@ void seq_triggerNextMasterStep(uint8_t stepSize)
 {
 	uint8_t i, sn, len;
 	for(i=0;i<NUM_TRACKS;i++) {
-		len = seq_patternSet.length[seq_activePattern][i];
-		if(!len) // length of 0 means length of 16 (since we are using 4 bits)
-			len=16;
+		len = seq_trackLength(seq_activePattern, i);
 		len *= 8; // need length in steps
 
 		if(seq_lastMasterStep[i] == 0) // need to set it so next step will inc it to 0
@@ -2093,8 +2098,7 @@ void seq_setBeatRepeat(uint8_t rate, uint8_t active)
 	seq_repeatPhase = 0;
 	for(uint8_t track = 0; track < NUM_TRACKS; track++)
 	{
-		uint8_t length = seq_patternSet.length[seq_activePattern][track];
-		if(length == 0) length = 16;
+		const uint8_t length = seq_trackLength(seq_activePattern, track);
 		int16_t current = seq_stepIndex[track];
 		seq_repeatResume[track] = seq_stepIndex[track];
 		seq_repeatCycle[track] = seq_trackCycles[track];
@@ -2536,7 +2540,7 @@ void seq_addNote(uint8_t trackNr,uint8_t vel, uint8_t note)
 		*/
 
 		//limit to track length
-		quantizedStep = quantizedStep%seq_patternSet.length[targetPattern][trackNr];
+		quantizedStep = quantizedStep%seq_trackLength(targetPattern, trackNr);
 		if(step != quantizedStep)
 		{
 			step = quantizedStep;
