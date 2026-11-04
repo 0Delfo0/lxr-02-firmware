@@ -312,10 +312,13 @@ uint8_t seq_getTrackLength(uint8_t trackNr)
 #else
 	uint8_t r=seq_patternSet.length[frontParser_shownPattern][trackNr];
 #endif
-	/*
-	if(r==0)
+	/* A pattern written before the Euclidean generator stopped storing 16 as
+	   0 still carries 0, and so does any .pat from older firmware. The
+	   sequencer reads that as 16 (seq_trackLength); the display and the
+	   encoder have to agree, or the page shows 0 for a 16-step track and
+	   turning the encoder up gives 1. */
+	if(r == 0)
 		return 16;
-	*/
 	return r;
 }
 //------------------------------------------------------------------------------

@@ -232,8 +232,12 @@ void euklid_transferPattern(uint8_t trackNr, uint8_t patternNr)
 	}
 // **PATROT - pattern end is now stored differently
 
-	if(len == 16)
-		len=0;
+	/* 16 used to be stored as 0 here, and remapped only inside the sequencer:
+	   everything else that read the field - the display, the .pat files, the
+	   SysEx dump - saw 0 (S-B1). The field is a whole byte in PatV04 and
+	   preset_validLength() accepts up to NUM_STEPS, so 16 fits and means what
+	   it says. Files already carrying 0 keep working: seq_trackLength() reads
+	   0 as 16 for the sequencer and seq_getTrackLength() for the display. */
 #if USE_PATTERN_EDIT_BUFFER
 	patternBackupBuffer.length[trackNr]=len;
 #else
