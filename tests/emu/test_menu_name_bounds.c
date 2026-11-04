@@ -20,6 +20,7 @@
 #include "lxr_api.h"
 #include "buttonHandler.h"
 #include "Parameters.h"
+#include "menu/menu.h"
 
 static int failures, pages, bad_chars;
 
@@ -48,6 +49,13 @@ static void check_lcd(const char *what)
 	}
 	shown[32] = 0;
 	pages++;
+	{
+		const uint8_t sub = menu_getSubPage();
+		if (sub >= NUM_SUB_PAGES) {
+			printf("    %-22s sub-page index %u, table has %d\n", what, sub, NUM_SUB_PAGES);
+			failures++;
+		}
+	}
 	if (bad) {
 		printf("    %-22s |%.16s|%.16s|  %d byte(s) not printable\n",
 		       what, shown, shown + 16, bad);
