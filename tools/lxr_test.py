@@ -8,6 +8,8 @@
   python3 tools/lxr_test.py kit 0          # 7F = edit buffer
   python3 tools/lxr_test.py snapshot       # every parameter, as JSON
   python3 tools/lxr_test.py cc 2 99        # raw control change
+  python3 tools/lxr_test.py start          # and stop: run the sequencer
+  python3 tools/lxr_test.py roll 0 1       # roll voice 0, which triggers it
   python3 tools/lxr_test.py selftest       # the checks below, PASS/FAIL each
 
 The transport is `amidi` from alsa-utils, deliberately: tools/lxr_status.py
@@ -38,6 +40,7 @@ CMD = {
     "CONDITION_REQUEST": 0x23, "CONDITION_DUMP": 0x24, "CONDITION_SET": 0x25,
     "GLOBALS_REQUEST": 0x30, "GLOBALS_DUMP": 0x31,
     "PARAM_GET": 0x40, "PARAM_SET": 0x41, "PARAM_VALUE": 0x42,
+    "SEQ_TRANSPORT": 0x48, "SEQ_ROLL": 0x49,
     "ACK": 0x7E, "NAK": 0x7F,
 }
 NAK_ERRORS = {0: "unknown command", 1: "checksum", 2: "version", 3: "length",
@@ -227,6 +230,29 @@ def set_params(dev, pairs):
     payload = [b for i, v in pairs for b in u14(i) + u14(v)]
     # PARAM_SET has no reply on success, so a NAK is the only thing to look for.
     dev.request(CMD["PARAM_SET"], payload, expect=CMD["NAK"])
+
+
+def transport(dev, action):
+    """0 stop, 1 start. The ACK carries what the sequencer reports afterwards,
+    so the caller can confirm rather than assume (docs/sysex.md 5.20)."""
+    cc, p = dev.request(CMD["SEQ_TRANSPORT"], [action], expect=CMD["ACK"])
+    if cc is None:
+        sys.exit("no ACK to SEQ_TRANSPORT: is the firmware older than this command?")
+    if cc == CMD["NAK"]:
+        sys.exit(f"NAK: {NAK_ERRORS.get(p[1], p[1])}")
+    return {"running": p[1]}
+
+
+def roll(dev, voice, on):
+    """With the sequencer stopped this fires the voice once through the
+    sequencer's own trigger, which is the only way to make a step's automation
+    lane apply from a host (docs/sysex.md 5.21)."""
+    cc, p = dev.request(CMD["SEQ_ROLL"], [voice, on], expect=CMD["ACK"])
+    if cc is None:
+        sys.exit("no ACK to SEQ_ROLL")
+    if cc == CMD["NAK"]:
+        sys.exit(f"NAK: {NAK_ERRORS.get(p[1], p[1])}")
+    return {"voice": p[1]}
 
 
 def kit(dev, slot):
@@ -426,7 +452,8 @@ def main(argv=None):
                     help="device ID 1-16, 0 = broadcast (default)")
     ap.add_argument("--timeout", type=float, default=1.0)
     ap.add_argument("command", choices=["identity", "status", "get", "set", "kit",
-                                        "pattern", "snapshot", "cc", "selftest"])
+                                        "pattern", "snapshot", "cc", "start", "stop",
+                                        "roll", "selftest"])
     ap.add_argument("args", nargs="*", type=int)
     ap.add_argument("--reset", action="store_true", help="status: clear peak and underruns")
     args = ap.parse_args(argv)
@@ -455,6 +482,15 @@ def main(argv=None):
         print(json.dumps(get_params(dev, ids), indent=2))
     elif args.command == "cc":
         dev.raw([0xB0, args.args[0], args.args[1]])
+    elif args.command == "start":
+        print(json.dumps(transport(dev, 1)))
+    elif args.command == "stop":
+        print(json.dumps(transport(dev, 0)))
+    elif args.command == "roll":
+        if not args.args:
+            sys.exit("roll takes a voice 0-6 and optionally 0/1 (default 1)")
+        print(json.dumps(roll(dev, args.args[0],
+                              args.args[1] if len(args.args) > 1 else 1)))
     elif args.command == "selftest":
         return selftest(dev)
     return 0

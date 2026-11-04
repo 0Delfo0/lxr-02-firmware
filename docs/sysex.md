@@ -135,6 +135,8 @@ Receive rules (device side; hosts should apply the same):
 | `45` | `EVENT` | device → host | — |
 | `46` | `FX_FREEZE` | host → device | none (only `NAK` on error) |
 | `47` | `SEQ_BEAT_REPEAT` | host → device | none (only `NAK` on error) |
+| `48` | `SEQ_TRANSPORT` | host → device | `ACK(48, running)` |
+| `49` | `SEQ_ROLL` | host → device | `ACK(49, voice)` |
 | `7E` | `ACK` | device → host | — |
 | `7F` | `NAK` | device → host | — |
 
@@ -202,6 +204,7 @@ Capability bits:
 | 8 | Audio freeze FX control (`FX_FREEZE`) |
 | 9 | Per-step trig conditions (`23`–`25`) |
 | 10 | Sequencer beat-repeat control (`47`) |
+| 11 | Transport and roll (`48`, `49`) |
 
 The capability field is a u14 value encoded as two 7-bit bytes, least
 significant first. This firmware reports `0x07FF` (wire bytes `7F 0F`):
@@ -525,7 +528,38 @@ Payload: u7 value. Engages or releases the freeze / beat repeat FX
 Example: engage at 1/16, then release:
 `F0 7D 4C 7F 01 46 05 3D F7`, `F0 7D 4C 7F 01 46 00 38 F7`
 
-### 5.20 `ACK` (`7E`) / `NAK` (`7F`)
+### 5.20 `SEQ_TRANSPORT` (`48`)
+
+Payload: `action` (u7) - `0` stop, `1` start. Replies `ACK(48, running)`, where
+`running` is what the sequencer reports afterwards, so a host can confirm
+rather than assume.
+
+It drives `seq_setRunning()`, the same function the START/STOP button reaches
+through the front-panel parser, and it works **whatever the sync setting is**.
+That is the point of having it: `MIDI_START` is acted on only when the unit is
+in an external sync mode, and the setting that selects that mode can itself
+only be changed from the panel, so a host had no way to make the sequencer
+play.
+
+**There is no `continue`.** `seq_setRunning(1)` calls
+`seq_setStepIndexToStart()` unconditionally, so every start is from the top.
+`action = 2` is answered with `NAK ERR_RANGE` rather than quietly treated as a
+start.
+
+### 5.21 `SEQ_ROLL` (`49`)
+
+Payload: `voice` (u7, 0-6), `on` (u7, 0/1). Replies `ACK(49, voice)`.
+
+This is the panel's roll control. With the sequencer **stopped** it fires the
+voice once through `seq_triggerVoice()`, which is the only path that reaches
+the sequencer's trigger without playback - and therefore the only way to make
+a step's automation lane apply from a host. A plain MIDI note on will not do
+it: that goes through `midiParser_noteOn()` and never reaches the sequencer.
+
+With the sequencer running it behaves as the panel's roll does, repeating at
+the rate set by `PAR_ROLL`.
+
+### 5.22 `ACK` (`7E`) / `NAK` (`7F`)
 
 | Field | `ACK` | `NAK` |
 |-------|-------|-------|
