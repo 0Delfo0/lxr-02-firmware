@@ -450,7 +450,8 @@ static void sx_cmdIdentity(void)
 	sxw_u14(&sx_w, SX_MAX_FRAME);
 	sxw_u14(&sx_w, SX_CAP_KITS | SX_CAP_PATTERNS | SX_CAP_GLOBALS | SX_CAP_PARAMS
 		| SX_CAP_ECHO | SX_CAP_SAVE | SX_CAP_CPU_METER | SX_CAP_DRUM_ENGINE
-		| SX_CAP_FX_FREEZE | SX_CAP_SEQ_CONDITIONS | SX_CAP_BEAT_REPEAT);
+		| SX_CAP_FX_FREEZE | SX_CAP_SEQ_CONDITIONS | SX_CAP_BEAT_REPEAT
+		| SX_CAP_TRANSPORT);
 	sxw_u7(&sx_w, sx_ownDevByte());
 	sxw_u7(&sx_w, activeParameters[PAR_SYSEX_ECHO] ? 1 : 0);
 	sx_send(sx_replyPorts);
@@ -811,6 +812,47 @@ static void sx_cmdBeatRepeat(SxReader *r)
 	seq_setBeatRepeat(rate, active);
 }
 //---------------------------------------------------------------------------
+/* Start and stop. Without this nothing about the sequencer can be measured
+   without a finger on START: MIDI_START is acted on only when
+   seq_getExtSync() is true (MidiParser.c:1784-1798), and seq_setExtSync() is
+   reachable only from the front panel (CortexParser.c:652-662), so the setting
+   that would let MIDI start it can itself only be changed from the panel.
+   This is an explicit command, so it works whatever the sync setting is.
+
+   There is no "continue": seq_setRunning(1) calls seq_setStepIndexToStart()
+   unconditionally, so every start is from the top. Action 2 is refused rather
+   than quietly aliased to 1. */
+static void sx_cmdSeqTransport(SxReader *r)
+{
+	const uint8_t action = sxr_u7(r);
+	if(r->err) { sx_nak(SX_CMD_SEQ_TRANSPORT, SX_ERR_LENGTH, 0); return; }
+	if(action > 1)
+	{
+		sx_nak(SX_CMD_SEQ_TRANSPORT, SX_ERR_RANGE, action);
+		return;
+	}
+	seq_setRunning(action);
+	sx_ack(SX_CMD_SEQ_TRANSPORT, seq_isRunning());
+}
+//---------------------------------------------------------------------------
+/* The roll, which is the only path that reaches seq_triggerVoice() with the
+   sequencer stopped (seq_setRoll in sequencer.c), and so the only way to make
+   an automation lane fire without playback. A plain MIDI note goes through
+   midiParser_noteOn() and never reaches the sequencer's trigger. */
+static void sx_cmdSeqRoll(SxReader *r)
+{
+	const uint8_t voice = sxr_u7(r);
+	const uint8_t onOff = sxr_u7(r);
+	if(r->err) { sx_nak(SX_CMD_SEQ_ROLL, SX_ERR_LENGTH, 0); return; }
+	if(voice >= NUM_TRACKS || onOff > 1)
+	{
+		sx_nak(SX_CMD_SEQ_ROLL, SX_ERR_RANGE, voice >= NUM_TRACKS ? voice : onOff);
+		return;
+	}
+	seq_setRoll(voice, onOff);
+	sx_ack(SX_CMD_SEQ_ROLL, voice);
+}
+//---------------------------------------------------------------------------
 static void sx_cmdGlobalsRequest(void)
 {
 	sx_begin(SX_CMD_GLOBALS_DUMP);
@@ -938,6 +980,8 @@ static void sx_dispatch(const SxFrame *f)
 	case SX_CMD_ECHO_SET:		sx_cmdEchoSet(&r); break;
 	case SX_CMD_FX_FREEZE:		sx_cmdFxFreeze(&r); break;
 	case SX_CMD_SEQ_BEAT_REPEAT: sx_cmdBeatRepeat(&r); break;
+	case SX_CMD_SEQ_TRANSPORT:	sx_cmdSeqTransport(&r); break;
+	case SX_CMD_SEQ_ROLL:		sx_cmdSeqRoll(&r); break;
 	default:					sx_nak(f->cmd, SX_ERR_UNKNOWN_CMD, 0); break;
 	}
 }
