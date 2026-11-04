@@ -38,6 +38,7 @@ enum SxCapability {
 	SX_CAP_FX_FREEZE	= 1 << 8,
 	SX_CAP_SEQ_CONDITIONS	= 1 << 9,
 	SX_CAP_BEAT_REPEAT	= 1 << 10,
+	SX_CAP_TRANSPORT	= 1 << 11,
 };
 
 enum SxCommand {
@@ -66,6 +67,8 @@ enum SxCommand {
 	SX_CMD_EVENT			= 0x45,
 	SX_CMD_FX_FREEZE		= 0x46,
 	SX_CMD_SEQ_BEAT_REPEAT	= 0x47,
+	SX_CMD_SEQ_TRANSPORT	= 0x48,
+	SX_CMD_SEQ_ROLL			= 0x49,
 	SX_CMD_ACK				= 0x7E,
 	SX_CMD_NAK				= 0x7F,
 };
