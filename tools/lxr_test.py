@@ -265,7 +265,26 @@ def kit(dev, slot):
             "params": list(body[8:8 + read_u14(p, 2)])}
 
 
-def pattern(dev, slot):
+def pattern_locks(raw):
+    """Every step whose automation destination is set, from a 3657-byte dump.
+
+    The dump is name[8] + the 3649-byte body; the body holds, per track, 64
+    seven-byte steps then 64 timing bytes (512 each). Byte 3 of a step is
+    param1Nr and byte 5 is param2Nr, and 255 is the "no automation" sentinel -
+    not 0, which is a valid destination. docs/file-formats.md has the layout.
+    """
+    body, out = raw[8:], []
+    for t in range(7):
+        for s in range(64):
+            o = t * 512 + s * 7
+            vol, prob, note, p1n, p1v, p2n, p2v = body[o:o + 7]
+            if p1n != 255 or p2n != 255:
+                out.append({"track": t, "step": s, "p1_dest": p1n,
+                            "p1_val": p1v, "p2_dest": p2n, "p2_val": p2v})
+    return out
+
+
+def pattern(dev, slot, raw_path=None):
     """PATTERN_REQUEST answers with every chunk back to back."""
     out = dev._run(" ".join(f"{b:02X}" for b in
                             frame(CMD["PATTERN_REQUEST"], [slot], dev.device)),
@@ -281,6 +300,15 @@ def pattern(dev, slot):
         sys.exit("no PATTERN_CHUNK")
     info["name"] = raw[:8].decode("ascii", "replace").rstrip(" \x00")
     info["received"] = len(raw)
+    if len(raw) >= 3657:
+        body = raw[8:]
+        info["track_lengths"] = list(body[3641:3648])
+        info["kit"] = body[3648]
+        info["steps_with_automation"] = pattern_locks(bytes(raw))
+    if raw_path:
+        with open(raw_path, "wb") as fh:
+            fh.write(bytes(raw))
+        info["raw_written_to"] = raw_path
     return info
 
 
@@ -477,6 +505,8 @@ def main(argv=None):
                                         "roll", "selftest"])
     ap.add_argument("args", nargs="*", type=int)
     ap.add_argument("--reset", action="store_true", help="status: clear peak and underruns")
+    ap.add_argument("--raw-out", metavar="FILE",
+                    help="pattern: also write the raw dump bytes to FILE")
     args = ap.parse_args(argv)
 
     dev = Device(args.port, BROADCAST if args.device == 0 else args.device - 1,
@@ -495,7 +525,8 @@ def main(argv=None):
     elif args.command == "kit":
         print(json.dumps(kit(dev, args.args[0] if args.args else 0x7F), indent=2))
     elif args.command == "pattern":
-        print(json.dumps(pattern(dev, args.args[0] if args.args else 0x7F), indent=2))
+        print(json.dumps(pattern(dev, args.args[0] if args.args else 0x7F,
+                                 args.raw_out), indent=2))
     elif args.command == "snapshot":
         ident = identity(dev)
         ids = ([i for i in range(ident["kit_length"])]
