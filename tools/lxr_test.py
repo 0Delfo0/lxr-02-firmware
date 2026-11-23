@@ -374,13 +374,13 @@ def selftest(dev):
         set_params(dev, [(pid, old)])
 
     # CC 0 is bank select, so it loads a kit into the edit buffer: the edit
-    # buffer is *meant* to change. What must not change is anything else, and
-    # a value above the last slot must be refused rather than read past the
-    # array (issue #74). Issue #1 lives in the same message: its paramNr
-    # underflowed to 0xFFFF for CC 0, writing 64 KB past a 255-byte array,
-    # which is not visible in the parameter space - the checks below cover
-    # what is: the unit stays alive and nothing around it moves.
-    print("CC 0, bank select (issues #1, #74)")
+    # buffer is *meant* to change. What must not change is anything else
+    # (issue #74 was a read past the kit array). Issue #1 lives in the same
+    # message: its paramNr underflowed to 0xFFFF for CC 0, writing 64 KB past
+    # a 255-byte array, which is not visible in the parameter space - the
+    # checks below cover what is: the unit stays alive and nothing around it
+    # moves.
+    print("CC 0, bank select (issues #1, #74, #107)")
     globals_ids = [i for i in range(ident["globals_start"], ident["num_params"])]
     globals_before = get_params(dev, globals_ids)
     stored_before = {slot: kit(dev, slot) for slot in (0, 1)}
@@ -401,13 +401,34 @@ def selftest(dev):
           f"{len(off)} parameters differ: {list(off)[:8]}" if off else
           f"all {len(loaded)} parameters match, clamping included")
 
-    before_oob = get_params(dev, [i for i in range(ident["kit_length"])])
-    dev.raw([0xB0, 0, 127])                     # 64 slots exist, so this one does not
+    # Since #107 a value above the last slot wraps onto the 64 kits (64 = kit 0,
+    # 127 = kit 63), matching the official firmware's dca0a44. So what has to be
+    # proved is that a kit *was* loaded.
+    #   The previous version of this check compared all 247 parameters before
+    # and after and asserted that none moved. On the reference project every
+    # kit slot is identical, so nothing moves whether the value is refused or
+    # wraps: the check passed either way and could not fail. A sentinel in the
+    # edit buffer is what distinguishes the two.
+    SENTINEL_ID, SENTINEL = 54, 77              # PAR_VELOD3, a value no kit holds
+    set_params(dev, [(SENTINEL_ID, SENTINEL)])
+    check(get_params(dev, [SENTINEL_ID])[SENTINEL_ID] == SENTINEL,
+          "a sentinel can be put in the edit buffer, so the next check can fail")
+    dev.raw([0xB0, 0, 127])                     # wraps onto kit 63
     after_oob = get_params(dev, [i for i in range(ident["kit_length"])])
-    moved = {i: (before_oob[i], v) for i, v in after_oob.items() if v != before_oob[i]}
-    check(not moved, "CC 0 = 127 is refused: there is no kit 127 to load",
-          f"{len(moved)} parameters changed - read from past the kit array"
-          if moved else "", known_issue="#74")
+    check(after_oob[SENTINEL_ID] != SENTINEL,
+          "CC 0 = 127 wraps onto kit 63 and loads it",
+          f"the sentinel survived, so no kit was loaded" if
+          after_oob[SENTINEL_ID] == SENTINEL else
+          f"sentinel {SENTINEL} -> {after_oob[SENTINEL_ID]}")
+    stored63 = kit(dev, 63)["params"]
+    def expected63(i):
+        lo, hi = ranges.get(i, (0, 255))
+        return min(max(stored63[i], lo), hi)
+    off63 = {i: (stored63[i], v) for i, v in after_oob.items()
+             if i < len(stored63) and v != expected63(i)}
+    check(not off63, "the edit buffer now matches stored kit 63",
+          f"{len(off63)} parameters differ: {list(off63)[:8]}" if off63 else
+          f"all {len(after_oob)} parameters match, clamping included")
 
     check(get_params(dev, globals_ids) == globals_before,
           "the global settings did not move")
