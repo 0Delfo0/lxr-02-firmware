@@ -91,7 +91,7 @@ can be in flight - which is already true, the UI is blocking during a save.
 A full card shows up as `FR_OK` with fewer bytes written than asked - FatFs reports it that way, which is
 why #3 exists at all.
 
-- Ours maps it to **`FR_DISK_ERR`**, and the screen says `Disk error!`. That is the message Davide saw.
+- Ours maps it to **`FR_DISK_ERR`**, and the screen says `Disk error!`. That is the message the device showed on a full card.
 - Theirs maps it to **`FR_DENIED`**, which is truthful: the card is full, the disk is fine.
 
 **But `menu_showSdError()` names only four codes, and it is the same four in both trees** - measured:
