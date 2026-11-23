@@ -112,11 +112,14 @@ void frontPanel_ccHandler()
 		//A CC value is 0-127 and there are NUM_KIT_SLOTS kits. A higher value used
 		//to be loaded anyway, reading past mainParameters into the edit buffer, and
 		//it stayed in menu_selectedPresetNr[0] for the next kit save to write with.
-		if(frontParser_midiMsg.data2 >= NUM_KIT_SLOTS)
-			return;
-		menu_selectedPresetNr[0] = frontParser_midiMsg.data2;
-		//preset_loadDrumset(frontParser_midiMsg.data2, 0);
-		preset_loadDrumsetRam(frontParser_midiMsg.data2,0, 0);
+		//It wraps rather than being refused, to match the official firmware from
+		//erica-synths/lxr-desktop-app dca0a44 on: a host written against that one
+		//expects 64 to be kit 0 and 127 to be kit 63, and a control that does
+		//nothing is harder to diagnose than one that wraps.
+		const uint8_t kitNr = frontParser_midiMsg.data2 % NUM_KIT_SLOTS;
+		menu_selectedPresetNr[0] = kitNr;
+		//preset_loadDrumset(kitNr, 0);
+		preset_loadDrumsetRam(kitNr,0, 0);
 		preset_touchTimer(PRESET_KIT_TIMER);
 		menu_repaint();
 		return;

@@ -47,9 +47,12 @@ CC2_EXTRAS = [
 ]
 
 SPECIAL_CC = [
-    (0, "Bank Select MSB", "Selects a kit. **Not safe with a value above 63 "
-        "while issue #74 is open**: it reads past mainParameters[64] into "
-        "activeParameters with an overlapping memcpy."),
+    (0, "Bank Select MSB", "Selects a kit. The value **wraps onto the 64 "
+        "kits**: 0-63 are the kits, 64 is kit 0 again and 127 is kit 63 "
+        "(frontPanelParser.c, `% NUM_KIT_SLOTS`). Same behaviour as the "
+        "official firmware from erica-synths/lxr-desktop-app dca0a44 on; "
+        "before #74 a value above 63 was loaded anyway and read past "
+        "mainParameters[64] into the edit buffer."),
     (1, "Modulation wheel", "Accepted and does nothing (`case CC_MOD_WHEEL` is empty)."),
     (6, "NRPN data entry", "The value byte of an NRPN message."),
     (98, "NRPN number LSB", "Low 7 bits of the NRPN number."),
