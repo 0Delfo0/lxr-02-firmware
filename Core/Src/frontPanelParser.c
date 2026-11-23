@@ -118,6 +118,15 @@ void frontPanel_ccHandler()
 		//nothing is harder to diagnose than one that wraps.
 		const uint8_t kitNr = frontParser_midiMsg.data2 % NUM_KIT_SLOTS;
 		menu_selectedPresetNr[0] = kitNr;
+		/* The edit buffer now holds this kit, so the loaded-kit number has to
+		   follow it. preset_loadDrumsetRam() does not set it, and a project
+		   save writes the edit buffer back with
+		   preset_saveDrumsetRam(menu_loadedPresetNr[CURRENT_KIT]) - so without
+		   this line a bank select to kit 36 followed by a project save put
+		   kit 36's sound into whichever slot was loaded before, losing it.
+		   The sequencer's own kit change does the same thing a line after its
+		   call (sequencer.c), and preset_LoadTmpKit() does it too. */
+		menu_loadedPresetNr[CURRENT_KIT] = kitNr;
 		//preset_loadDrumset(kitNr, 0);
 		preset_loadDrumsetRam(kitNr,0, 0);
 		preset_touchTimer(PRESET_KIT_TIMER);
