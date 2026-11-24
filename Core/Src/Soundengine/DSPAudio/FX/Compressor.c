@@ -177,7 +177,12 @@ void Compressor_process(Compressor *c, int16_t *fxBuffer,int16_t* outL, int16_t*
 			gr = dB2lin(gr);
 			//debugWatch = gr;
 
-			left[i]  = fxBuffer[idx1] * gr * c->markupGain;//gain;
+			/* Saturate as the stereo branch above does. gr and markupGain are
+			   floating point and markupGain exists to raise the level, so the
+			   product can exceed what an int16_t holds; the narrowing then
+			   keeps the low 16 bits and a peak comes out with its sign
+			   flipped. */
+			left[i]  = __SSAT(fxBuffer[idx1] * gr * c->markupGain, 16);//gain;
 
 
 			//--- Output transfer ---
