@@ -16,6 +16,7 @@
 #include "lxr_api.h"
 #include "Parameters.h"
 #include "Soundengine/MIDI/MidiVoiceControl.h"
+#include "fx_setup.h"
 
 #define SR        44100
 #define BLOCK     64
@@ -82,9 +83,7 @@ static int delay_is_audible(void)
 {
 	double tail[2];
 	for (int t = 0; t < 2; t++) {
-		lxr_set_param(PAR_FX_TYPE, t ? 4 : 0);
-		lxr_set_param(PAR_FX_ROUTING, 0);
-		lxr_set_param(PAR_FX_DRY_WET, 80);
+		fx_setup(0, t ? 4 : 0, 100, 40, 64, 110, 110);
 		lxr_set_param(PAR_FX_DELAY_TYPE, 0);
 		lxr_idle_blocks(200);
 		voiceControl_noteOn(0, 60, 127);
@@ -115,11 +114,22 @@ int main(void)
 		return 0;
 	}
 
-	lxr_set_param(PAR_FX_TYPE, 4);        /* del */
-	lxr_set_param(PAR_FX_ROUTING, 0);
-	lxr_set_param(PAR_FX_DRY_WET, 80);
+	/* voice 1 into the bus, delay, and all four of its parameters - the filter
+	   included, because Delay_process() passes its output through
+	   calcOnePole(&d->tone, out) and the boot value of that one-pole is closed:
+	   without PAR_FX_P3 the delay is silent and the whole test measures nothing
+	   (#115). */
+	fx_setup(0, 4, 100, 40, 64, 110, 110);
 	lxr_set_param(PAR_FX_DELAY_TYPE, 0);  /* Del */
 	lxr_idle_blocks(200);
+
+	/* the delay line has to hold audio before a read trails into it */
+	puts("  warm-up: filling the delay line");
+	for (int k = 0; k < 40; k++) {
+		voiceControl_noteOn(0, 60, 127);
+		render(NULL, MS_BLOCKS(120));
+		voiceControl_noteOff(0);
+	}
 
 	const int N = 12;
 	double jmax[2] = {-1e9, -1e9}, smax[2] = {-1e9, -1e9};
