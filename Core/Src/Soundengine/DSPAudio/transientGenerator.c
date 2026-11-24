@@ -57,7 +57,16 @@ void transient_trigger(TransientGenerator* transient)
 		{
 			uint32_t phase = transient->phase;
 			phase = phase >> 20;
-			buf[i] = transient->volume*(transientData[transient->waveform-2][phase]<<8) * (phase < TRANSIENT_SAMPLE_LENGTH);//* transientVolumeTable[phase>>5];
+			/* * 256 rather than << 8: transientData is int8_t, and shifting a
+			   negative value left is undefined. Every compiler so far produces
+			   the arithmetic result, which is why this sounds right, but it is
+			   not something to leave to the next optimiser.
+			     The (phase < TRANSIENT_SAMPLE_LENGTH) factor is kept as it was:
+			   it reads like a bound but cannot act as one, since the index is
+			   already bounded by the enclosing if - phase < 2311061504 gives
+			   phase>>20 <= 2203, inside the 2205 rows. Removing it would be a
+			   behaviour-free change to code we may yet send upstream. */
+			buf[i] = transient->volume*(transientData[transient->waveform-2][phase]*256) * (phase < TRANSIENT_SAMPLE_LENGTH);//* transientVolumeTable[phase>>5];
 			transient->phase +=  (transient->pitch*(1<<20)); //2311061504 => 2204<<20
 		}
 		else
@@ -68,6 +77,16 @@ void transient_trigger(TransientGenerator* transient)
 	}
 }
 //---------------------------------------------------------------
+/* Not called from anywhere: the per-sample variant superseded by
+   transient_calcBlock(), which every voice uses. Left in place rather than
+   deleted to keep the diff against upstream small, but it must not be revived
+   as it stands - it holds two defects the block variant does not:
+     - transientData[transient->waveform-1] indexes 1..12 of a [12] array, so
+       waveform 13 reads past the table. PAR_TRANS<n>_WAVE has max 13, so that
+       value is selectable. transient_calcBlock uses waveform-2 and is right.
+     - phase>>5 indexes transientVolumeTable[69] with no bound of its own; the
+       block variant is bounded by its enclosing if to 2203>>5 = 68, exactly
+       the last element. */
 void transient_calc(TransientGenerator* transient)
 {
 	uint32_t phase = transient->phase;

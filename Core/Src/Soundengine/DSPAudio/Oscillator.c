@@ -32,7 +32,23 @@ static __inline uint8_t fast_log2 (const uint32_t val)
 //-----------------------------------------------------------
 static __inline int freqToMidiNote(const float f)
 {
-	return (12*fast_log2((uint32_t)(f/440.f)))+70;
+	const uint32_t r = (uint32_t)(f/440.f);
+	/* r is 0 for every frequency below 440 Hz, which is most of this
+	   instrument's range, and __CLZ(0) is undefined. On this core the
+	   instruction answers 32, so fast_log2 returned (uint8_t)(31-32) = 255,
+	   this returned 12*255+70 = 3130, and freqToTableIndex() truncated that to
+	   wavetable row 4. 58 is the smallest value that gives the same row
+	   (58/12 = 4), so the device sounds exactly as before with no undefined
+	   behaviour.
+	     It is not cosmetic. A host build of this engine got 1877271063 from
+	   __builtin_clz(0) and chose row 5, so test/engine's render disagreed with
+	   the hardware for every oscillator below A4 - which is what made that
+	   harness an unreliable proxy. This makes the two agree.
+	     Whether row 4 is the *right* row below 440 Hz is a separate question:
+	   one row per octave would want 3 at 110 Hz and 2 at 55 Hz. Changing that
+	   alters the sound of every kit, so it is a decision rather than a fix. */
+	if(!r) return 58;
+	return (12*fast_log2(r))+70;
 }
 //-----------------------------------------------------------
 static __inline uint8_t freqToTableIndex(const float f)
