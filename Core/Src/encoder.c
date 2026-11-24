@@ -69,13 +69,16 @@ void encode_init(void)
 
 static void sampleRotation(void)
 {
-	const uint8_t state = readPhases();
-
+	/* Do not sample before the pins are configured. This used to call
+	   encode_init() itself, but the first call comes from SysTick, which starts
+	   at HAL_Init() - before MX_GPIO_Init() has made these pins inputs. Both
+	   phases then read 0, the rest state was learnt as the opposite of the real
+	   detent, and the first detent after a change of direction was never
+	   counted. main() now calls encode_init() once the pins exist. */
 	if (!encInitialised)
-	{
-		encode_init();
 		return;
-	}
+
+	const uint8_t state = readPhases();
 	if (state == encState)
 		return;
 
