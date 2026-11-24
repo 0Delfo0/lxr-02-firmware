@@ -42,6 +42,18 @@ static void modNode_setOriginalValueChanged(ModulationNode* vm, uint16_t idx)
 	if(vm->destination == idx) { //parameter is active in this modulator
 		const Parameter *p=&parameterArray[idx];
 
+		/* Destination 0 has no ptr. The two sibling functions that read
+		   through it return early on exactly this case
+		   (modNode_setDestination, modNode_updateValue); this one did not,
+		   so it read address 0. On the F7 that is ITCM, so the read returns
+		   a byte of code and no writer ever stores it back - harmless here,
+		   but a null dereference on any other target: it traps on x86 and
+		   cannot be executed at all on WebAssembly. */
+		if(!p->ptr)
+		{
+			return;
+		}
+
 			//update orig value
 			switch(p->type)
 			{
