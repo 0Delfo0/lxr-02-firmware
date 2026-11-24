@@ -1129,7 +1129,16 @@ static void MX_ADC1_Init(void)
   */
   sConfig.Channel = ADC_CHANNEL_8;
   sConfig.Rank = ADC_REGULAR_RANK_1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
+  /* 3 cycles is shorter than the sample capacitor needs to settle to the new
+     channel's voltage, so every reading kept part of the previous channel in
+     the scan and turning one knob moved its neighbour by a step. This one
+     assignment covers all 14 channels: the blocks below set only Channel and
+     Rank. ADC clock is PCLK2/8 = 13.5 MHz (HSE 8 MHz, PLL 216 MHz, APB2
+     HCLK/2 = 108 MHz) and a 12-bit conversion costs the sampling time plus 12
+     cycles, so a scan of 14 channels goes from 15.6 us to 161.8 us. That also
+     makes the ADC DMA interrupt - which sits above the audio timer - fire 10.4
+     times less often. */
+  sConfig.SamplingTime = ADC_SAMPLETIME_144CYCLES;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
     Error_Handler();
