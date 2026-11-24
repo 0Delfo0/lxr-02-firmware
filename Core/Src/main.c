@@ -316,6 +316,9 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  /* The encoder learns its detent reference from the phase pins, so it has to
+     read them after they are configured and not from the first SysTick. */
+  encode_init();
   MX_DMA_Init();
   MX_ADC1_Init();
   MX_I2S2_Init();
