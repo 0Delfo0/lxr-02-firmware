@@ -92,6 +92,18 @@ void Delay_calcBuffer(Delay* d, uint8_t bufferIdx)
 
 void Delay_processPingPong(Delay *d, int16_t *fxBuffer,int16_t* outL, int16_t* outR, uint16_t size,  uint8_t channels, float dryWet)
 {
+	/* Each ping-pong line owns half of FX_BUFFER, and the right line is
+	   addressed as (FX_BUFFER_SIZE>>1) + pointer. The plain delay keeps the
+	   same pointers anywhere in the whole buffer - Delay_process() masks
+	   d->write with FX_BUFFER_SIZE, not with half of it - so after a switch
+	   from it the right line reads and writes past the end of the array until
+	   the pointers happen to wrap. FX_BUFFER lives in DTCM, so the store lands
+	   on whatever the linker put next.
+	     Clamping on entry is a no-op whenever the pointers are already inside,
+	   which is every block but the first after a mode change. */
+	d->oldRead	&= FX_BUFFER_SIZE>>1;
+	d->newRead	&= FX_BUFFER_SIZE>>1;
+	d->write	&= FX_BUFFER_SIZE>>1;
 
 	int32_t x;
 	int32_t* stereoOut = (int32_t*)outL;
