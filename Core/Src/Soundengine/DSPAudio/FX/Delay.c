@@ -42,6 +42,32 @@ float interpolate_s16(float a, float b, float x)
 	return a*(1-x) + b*x;
 }
 
+/* Arm the crossfade when the delay type changes.
+
+   The delay already owns a crossfade: Delay_setDelayTime() sets interpValue to
+   1 and interpStep to one over 10 ms of samples, and both process functions
+   then mix the old and the new read position until it reaches zero. That is why
+   changing the delay *time* is smooth.
+
+   Changing the *type* never went through it. delayType is written directly -
+   MidiParser.c on the MIDI path, and parameterArray[PAR_FX_DELAY_TYPE] holds a
+   pointer to the field for the panel and for modulation - so there is no setter
+   to hook. The read position then moves between the halves of FX_BUFFER
+   between two consecutive samples, which is a step in the waveform: measured on
+   the device as +55 to +63 dB of sample-to-sample discontinuity in about half
+   the switches to ping-pong (#116).
+
+   Comparing the field with the type the last call saw catches every writer,
+   which is the shape FxBus_process() already uses for fxType and lastFxType. */
+static void Delay_armTypeChange(Delay* d)
+{
+	if(d->delayType == d->lastDelayType)
+		return;
+	d->lastDelayType = d->delayType;
+	d->interpValue = 1.f;
+	d->interpStep  = 1.0f / (REAL_FS * 0.01f);	/* 10 ms, as the time change uses */
+}
+
 void Delay_calcBufferPingPong(Delay* d, uint8_t bufferIdx)
 {
 	const uint32_t halfsize = FX_BUFFER_SIZE>>1;
@@ -92,6 +118,7 @@ void Delay_calcBuffer(Delay* d, uint8_t bufferIdx)
 
 void Delay_processPingPong(Delay *d, int16_t *fxBuffer,int16_t* outL, int16_t* outR, uint16_t size,  uint8_t channels, float dryWet)
 {
+	Delay_armTypeChange(d);
 	/* Each ping-pong line owns half of FX_BUFFER, and the right line is
 	   addressed as (FX_BUFFER_SIZE>>1) + pointer. The plain delay keeps the
 	   same pointers anywhere in the whole buffer - Delay_process() masks
@@ -205,6 +232,7 @@ void Delay_processPingPong(Delay *d, int16_t *fxBuffer,int16_t* outL, int16_t* o
 
 void Delay_process(Delay *d, int16_t *fxBuffer,int16_t* outL, int16_t* outR, uint16_t size,  uint8_t channels, float dryWet)
 {
+	Delay_armTypeChange(d);
 	//FX_BUFFER[0] = 0;
 
 	int32_t x;

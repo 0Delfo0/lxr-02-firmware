@@ -66,6 +66,12 @@ typedef struct DelayStruct
 	OnePoleFilter tone2;
 	//RingBuffer timeBuffer;
 	uint8_t delayType;
+	/* The type as the last process call saw it. A change of type moves the read
+	   position between the halves of FX_BUFFER, and every writer of delayType
+	   writes the field directly - MidiParser.c, and parameterArray[] holds a
+	   pointer to it - so there is no setter to hook. Comparing here catches all
+	   of them, the way FxBus_process() compares fxType with lastFxType. */
+	uint8_t lastDelayType;
 
 } Delay;
 
