@@ -187,7 +187,14 @@ void Delay_processPingPong(Delay *d, int16_t *fxBuffer,int16_t* outL, int16_t* o
       }
       else
       {
-        *(uint16_t*)stereoOut = __QADD16(*stereoOut, x);
+        /* One DAC channel: write the low half and step over the pair, which is
+           what the int16_t* + 2 in Distortion.c's mono branch does. Reading
+           *stereoOut as int32_t to get there is undefined - the pointer is only
+           2-byte aligned here, which is what UBSan reported - and the packed
+           add's upper half was discarded anyway. A 16-bit saturating add stores
+           the same value with nothing undefined. */
+        int16_t *monoOut = (int16_t*)stereoOut;
+        *monoOut = (int16_t)__SSAT((int32_t)*monoOut + (int16_t)x, 16);
         stereoOut++;
       }
 
@@ -273,7 +280,14 @@ void Delay_process(Delay *d, int16_t *fxBuffer,int16_t* outL, int16_t* outR, uin
     }
     else
     {
-      *(uint16_t*)stereoOut = __QADD16(*stereoOut, x);
+      /* One DAC channel: write the low half and step over the pair, which is
+         what the int16_t* + 2 in Distortion.c's mono branch does. Reading
+         *stereoOut as int32_t to get there is undefined - the pointer is only
+         2-byte aligned here, which is what UBSan reported - and the packed
+         add's upper half was discarded anyway. A 16-bit saturating add stores
+         the same value with nothing undefined. */
+      int16_t *monoOut = (int16_t*)stereoOut;
+      *monoOut = (int16_t)__SSAT((int32_t)*monoOut + (int16_t)x, 16);
       stereoOut++;
     }
 
