@@ -695,6 +695,18 @@ uint8_t menu_shownPattern = 0;
 uint8_t menu_muteModeActive = 0;
 uint8_t menu_activeBar = 0;	//the currently visible bar, selectable with <-> bar buttons
 uint8_t menu_songMenuPosition = 0;
+/* The invariant: this is always a valid index into the 64 entries of
+   seq_activeSong. It is indexed without a bound in seven places - the two
+   lines of the song page, the edit-mode encoder and seq_addPatternToSong() -
+   and seq_activeSong points into seq_songData[64][64], so an index of 255
+   lands on slot + 3, offset 63: another project's song, not memory a
+   sanitizer would object to. The sequencer sets this from
+   seq_songPositionPointer, which is deliberately 255 before the first step,
+   so the clamp lives here rather than at each reader. */
+void menu_setSongPosition(uint8_t pos)
+{
+	menu_songMenuPosition = (pos < MAX_SONG_LENGTH) ? pos : 0;
+}
 
 /** buffer to minimize the display configuration.
 It holds a representation of the display content so only the changed cells have to be updated*/
@@ -2655,12 +2667,15 @@ void menu_handleSongMenu(int8_t inc, uint8_t btnClicked)
 	{
 		if(inc>0)
 		{
-			if(menu_songMenuPosition > MAX_SONG_LENGTH) menu_songMenuPosition = 0;
+			if(menu_songMenuPosition >= MAX_SONG_LENGTH) menu_songMenuPosition = 0;
 			if(menu_songMenuPosition < (MAX_SONG_LENGTH-1) ) menu_songMenuPosition++;
 		}
 		else if(inc<0)
 		{
-			if(menu_songMenuPosition > 0) menu_songMenuPosition--;
+			/* repair an out-of-range cursor here too: turning down used to
+			   take 255 to 254 and never recover */
+			if(menu_songMenuPosition >= MAX_SONG_LENGTH) menu_songMenuPosition = 0;
+			else if(menu_songMenuPosition > 0) menu_songMenuPosition--;
 		}
 	}
 	//repaint handled in base encoder function
