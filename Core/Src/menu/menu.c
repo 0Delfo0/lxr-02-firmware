@@ -4530,13 +4530,23 @@ void setNoteName(uint8_t num, char *buf)
 	// B is at the end, so only E presents a hurdle
 	buf[0]=(char)((n>8 ? 60 : 67) + ((n+(n>4))/2));
 	// determine natural or sharp (# if the note is 1, 3, 6, 8, 10)
-	buf[1]=(n < 5 && (n&1)) || (n > 5 && !(n&1)) ? '#' : ' ';
-	/* The octave is one character, so it runs out of digits: notes 120 to 127
-	   are octave 10 and 48+10 is ':'. 'A' continues the digits the way hex
-	   does, and the field is the last three columns of the display line
-	   (editDisplayBuffer[1][13]), so there is no room for a second digit. */
-	const uint8_t oct = (uint8_t)(num / 12);
-	buf[2]=(char)(oct < 10 ? 48 + oct : 'A');
+	const uint8_t isSharp = (n < 5 && (n&1)) || (n > 5 && !(n&1));
+	buf[1]=isSharp ? '#' : ' ';
+	/* Octaves count from note 0 = C-1, as every host does, so they run -1 to 9
+	   and never need two digits. The name is exactly three characters - one
+	   call site writes it to editDisplayBuffer[1][13], the last three columns
+	   of the line - so C#-1 does not fit: in octave -1 a lowercase letter
+	   carries the sharp instead, c-1 being C#-1 and C-1 the natural. */
+	if(num < 12)
+	{
+		if(isSharp) buf[0]=(char)(buf[0] + 32);		/* lowercase = sharp */
+		buf[1]='-';
+		buf[2]='1';
+	}
+	else
+	{
+		buf[2]=(char)(48 + (num / 12) - 1);
+	}
 }
 
 /* fill up to 2 bytes of a buffer with string representation of a number */
