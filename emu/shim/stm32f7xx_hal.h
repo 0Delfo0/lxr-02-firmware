@@ -204,7 +204,11 @@ extern USART_TypeDef emu_usart[3];
 typedef struct { uint32_t dummy; } RNG_HandleTypeDef;
 uint32_t HAL_RNG_GetRandomNumber(RNG_HandleTypeDef *h);
 
-typedef struct { uint32_t dummy; } ADC_HandleTypeDef;
+/* The firmware's HAL_ADC_ConvCpltCallback() tests hadc->Instance == ADC1 to
+   tell ADC1's scan-complete interrupt from any other, so both have to exist
+   here. The value is only ever compared, never dereferenced. */
+#define ADC1 ((void *)0x40012000)
+typedef struct { void *Instance; } ADC_HandleTypeDef;
 typedef struct { uint32_t dummy; } DMA_HandleTypeDef;
 typedef struct { uint32_t dummy; } I2S_HandleTypeDef;
 typedef struct { uint32_t dummy; } SD_HandleTypeDef;

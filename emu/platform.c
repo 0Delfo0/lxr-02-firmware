@@ -45,6 +45,21 @@
 
 /* ---- globals that main.c and stm32f7xx_it.c define ----------------------- */
 ADC_HandleTypeDef hadc1;
+
+/* The firmware counts complete ADC scans in the DMA transfer-complete
+   interrupt and evaluates each pot at most once per scan, so the emulator has
+   to raise that interrupt or adc_checkPots() returns early for ever. The weak
+   definition is what the HAL provides on the device and is what a build
+   without that code links against. One simulated scan per call is faster than
+   the device, where several calls fall inside one 162 us scan; the persistence
+   filter therefore needs three calls here rather than three real scans. */
+__attribute__((weak)) void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *h) { (void)h; }
+
+static void adc_scan(void)
+{
+	HAL_ADC_ConvCpltCallback(&hadc1);
+	adc_checkPots();
+}
 I2S_HandleTypeDef hi2s2;
 I2S_HandleTypeDef hi2s3;
 RNG_HandleTypeDef hrng;
@@ -95,9 +110,9 @@ int16_t dma_buffer[OUTPUT_DMA_SIZE * 4];
 int16_t dma_buffer2[OUTPUT_DMA_SIZE * 4];
 volatile uint8_t bCurrentSampleValid = 0;
 
-int CodecInit(uint32_t fs)
+/* AudioCodecManager.h dropped the sample-rate argument; the stub follows it. */
+int CodecInit(void)
 {
-	(void)fs;
 	dma_buffer[0] = 32756;   /* as in AudioCodecManager.c */
 	return 0;
 }
@@ -278,6 +293,7 @@ static void reset_inputs(void)
 	emu_set_jacks(0x3);
 	/* ADC DMA buffer: 4 endless pots as sin/cos pairs (0..7), 6 volume faders
 	 * (8..13). Pots rest mid-scale, faders start fully up. */
+	hadc1.Instance = ADC1;
 	memset(adc_buf, 0, sizeof(adc_buf));
 	memset(adc_buf_old, 0, sizeof(adc_buf_old));
 	for (int i = 0; i < 4; i++) {
@@ -372,8 +388,8 @@ int emu_boot(const emu_boot_opts *opts)
 	lcd_clear();
 	lcd_home();
 	menu_init();
-	adc_checkPots();
-	adc_checkPots();
+	adc_scan();
+	adc_scan();
 	MX_FATFS_ReInit();
 
 	show_splash();
@@ -390,8 +406,8 @@ int emu_boot(const emu_boot_opts *opts)
 	else menu_showSdError(res);
 
 	lcd_clear();
-	adc_checkPots();
-	adc_checkPots();
+	adc_scan();
+	adc_scan();
 
 	sprintf(currentFolder, "/proj00");
 	if (sd_card_ok) {
@@ -477,17 +493,17 @@ void emu_main_loop_iteration(void)
 	lastSdState = BSP_SD_IsDetected();
 
 	pots_hw_tick();
-	adc_checkPots();
+	adc_scan();
 	soundengine_process();
 	buttonHandler_tick();
-	adc_checkPots();
+	adc_scan();
 	menu_parseEncoder(encode_read4(), encode_readButton());
 	led_tickHandler();
-	adc_checkPots();
+	adc_scan();
 	soundengine_process();
 	screensaver_check();
 	dio_process();
-	adc_checkPots();
+	adc_scan();
 	soundengine_process();
 	adc_checkFaders();
 
