@@ -4531,8 +4531,12 @@ void setNoteName(uint8_t num, char *buf)
 	buf[0]=(char)((n>8 ? 60 : 67) + ((n+(n>4))/2));
 	// determine natural or sharp (# if the note is 1, 3, 6, 8, 10)
 	buf[1]=(n < 5 && (n&1)) || (n > 5 && !(n&1)) ? '#' : ' ';
-	// determine the octave 0=48
-	buf[2]=(char)(48+(num / 12));
+	/* The octave is one character, so it runs out of digits: notes 120 to 127
+	   are octave 10 and 48+10 is ':'. 'A' continues the digits the way hex
+	   does, and the field is the last three columns of the display line
+	   (editDisplayBuffer[1][13]), so there is no room for a second digit. */
+	const uint8_t oct = (uint8_t)(num / 12);
+	buf[2]=(char)(oct < 10 ? 48 + oct : 'A');
 }
 
 /* fill up to 2 bytes of a buffer with string representation of a number */
