@@ -21,7 +21,7 @@ INDTCMZ int16_t dma_buffer2[OUTPUT_DMA_SIZE*4];
 volatile INDTCMZ uint8_t bCurrentSampleValid = 0;
 //int16_t audioOutBuffer[2];
 //------------------------------------------------------------------
-int CodecInit()
+int CodecInit(void)
 {
     dma_buffer[0] = 32756;
     codec_initCsCodec((uint32_t)dma_buffer, OUTPUT_DMA_SIZE*2,(uint32_t)dma_buffer2, OUTPUT_DMA_SIZE*2);

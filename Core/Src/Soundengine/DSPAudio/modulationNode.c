@@ -41,13 +41,18 @@ static void modNode_setOriginalValueChanged(ModulationNode* vm, uint16_t idx)
 
 	if(vm->destination == idx) { //parameter is active in this modulator
 		const Parameter *p=&parameterArray[idx];
-#ifdef LXR_EMU
-		// Destination 0 has no pointer. The device reads address 0 (ITCM) here,
-		// the host can't. The value is never written back (every write checks
-		// p->ptr), so skipping the read changes nothing.
+
+		/* Destination 0 has no ptr. The two sibling functions that read
+		   through it return early on exactly this case
+		   (modNode_setDestination, modNode_updateValue); this one did not,
+		   so it read address 0. On the F7 that is ITCM, so the read returns
+		   a byte of code and no writer ever stores it back - harmless here,
+		   but a null dereference on any other target: it traps on x86 and
+		   cannot be executed at all on WebAssembly. */
 		if(!p->ptr)
+		{
 			return;
-#endif
+		}
 
 			//update orig value
 			switch(p->type)

@@ -12,6 +12,7 @@
  */
 
 #include "Soundengine/DSPAudio/ResonantFilter.h"
+#include <string.h>
 
 
 // to make the linker happy. __errno seems not defined
@@ -123,35 +124,35 @@ IN_ITCM_RAM float softClipTwo(float in)
 
 //	return in;
 }
-#pragma GCC push_options
-#pragma GCC optimize("O0")
-#define is_nan(x) ((x) != (x))
+/* A filter can blow up with cutoff near the top, high resonance and a lot of
+   drive, and a non-finite state is self-sustaining: every later sample is NaN
+   too and converts to 0 on the way to the DAC, so the voice goes silent and
+   stays silent until the unit is power-cycled. Reloading the kit does not help,
+   because nothing writes a finite value back into s1/s2.
 
+   Test the exponent bits rather than the value. We build with -ffast-math
+   (CMakeLists.txt), which implies -ffinite-math-only, so the compiler is
+   entitled to assume no operand is ever NaN and folded the old (in != in) test
+   away completely - this function compiled to a load and a return, with no
+   comparison in the generated assembly at all. The #pragma GCC optimize("O0")
+   that used to wrap it did not help, because it changes the optimisation level
+   and not the unsafe-math assumptions. The exponent test cannot be folded and
+   also catches infinity.
+
+   The idea was already sketched in a comment here and abandoned; the sketch
+   cast the float itself to a pointer rather than taking its address, which is
+   why it could never have worked. */
 float removeMaliciousSample(float in)
 {
-	if(is_nan(in))
+	uint32_t bits;
+	memcpy(&bits, &in, sizeof bits);
+	if((bits & 0x7F800000u) == 0x7F800000u)
 	{
 		return 0.f;
 	}
 
 	return in;
-
-	/*
-	uint32_t* floatInput = (uint32_t*)in;// *inArrayOfFloats;
-    uint32_t sample = *floatInput;// *inArrayOfFloats;
-    uint32_t exponent = sample & 0x7F800000;
-
-            // exponent < 0x7F800000 is 0 if NaN or Infinity, otherwise 1
-            // exponent > 0 is 0 if denormalized, otherwise 1
-
-    int aNaN = exponent < 0x7F800000;
-    int aDen = exponent > 0;
-
-
-    *floatInput = sample * ( aNaN & aDen );
-    *floatInput */
 }
-#pragma GCC pop_options
 #define USE_FMAF 0
 //------------------------------------------------------------------------------------
 IN_ITCM_RAM void SVF_calcBlockZDF(ResonantFilter* filter, const uint8_t type, int16_t* buf, const uint8_t size)
@@ -432,6 +433,15 @@ IN_ITCM_RAM void SVF_calcBlockCheapZDF(ResonantFilter* filter, const uint8_t typ
 
 	} else {
 
+		/* No guard here, deliberately. This block path has none, and it needs
+		   none: REVERB_CHEAP_VOICE_FILTERS is 0 (FxBus.h:30), so the three
+		   calls to this function - Snare.c:163, CymbalVoice.c:179,
+		   HiHat.c:188 - all sit in dead #if blocks and nothing invokes it.
+		   Preprocessing those three files with the project's own command
+		   shows zero compiled calls. Adding the guard here cost 56 B of ITCM,
+		   which is the scarcest region in this firmware, to protect code that
+		   never runs. If REVERB_CHEAP_VOICE_FILTERS is ever turned on, the
+		   two lines from SVF_calcBlockZDF() belong here too. */
 		for(i=0;i<size;i++)
 		{
 	#if USE_SHAPER_NONLINEARITY
