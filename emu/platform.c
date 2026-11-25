@@ -235,10 +235,17 @@ static void encoder_hw_tick(void)
 /* ---- endless pots -----------------------------------------------------------
  * Each pot has two wipers on ADC channels 2i and 2i+1. calcPosition() in
  * IO/adcPots.c takes the angle from wiper b and uses wiper a only to tell the
- * two half turns apart (a above mid-scale: 0..180 degrees). adc_checkPots()
- * only looks at a pot whose wiper a moved by more than its hysteresis, so a
- * is alternated between two values in the right half on every move. The pot
- * turns in steps of POT_STEP_DEG, one step per main loop pass; a value
+ * two half turns apart (a above mid-scale: 0..180 degrees).
+ *
+ * a is still alternated between two values on every move, and that is now
+ * history rather than necessity: adc_checkPots() used to gate on wiper a
+ * alone, so without the alternation a turn moved b and the firmware never
+ * looked. #125 made the gate watch both wipers. The alternation is kept
+ * because it is also what the hardware does - a is a second wiper, not a
+ * constant - and tests/emu/test_pot_wiper_gate.c is the one that deliberately
+ * holds a still, which no hand on a real pot can do.
+ *
+ * The pot turns in steps of POT_STEP_DEG, one step per main loop pass; a value
  * parameter moves by one per step, menu-type parameters need 8 steps, as on
  * the device. */
 #define POT_STEP_DEG 2
