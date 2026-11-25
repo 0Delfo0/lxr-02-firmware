@@ -385,7 +385,12 @@ float seq_getDeltaTShuffleDelay(uint16_t bpm)
 	//--- calc deltaT ----
 	// for 4/4tel takt -> 1 beat = 4 main steps = 4*8 = 32 sub steps
 	// 120 bpm 4/4tel = 120 * 1 beat / 60sec = 120 * 32 in 60 sec;
-	dT 	= (1000*60)/bpm; 	//bei 12 = 500ms = time for one beat
+	/* 1000.f, not 1000: bpm is an integer and so was the dividend, so this
+	   divided in integer arithmetic and truncated before dT ever became a
+	   float. At 128 bpm 60000/128 is 468.75 and the result was 468, which is
+	   0.16 % short - the unit played at 128.205. The error is zero only where
+	   60000 is divisible by the tempo: 120, 125, 150, 200. */
+	dT 	= (1000.f*60.f)/bpm; 	//bei 12 = 500ms = time for one beat
 	dT /= 96.f; //we run the internal clock at 96ppq -> seq clock 32 ppq == prescaler 3, midi clock 24 ppq == prescale 4
 	dT *= 4;
 	//32.f;					// time for one beat / number of steps per beat
@@ -415,7 +420,9 @@ static void seq_calcDeltaT(uint16_t bpm, uint8_t isShuffled)
 	//--- calc deltaT ----
 	// for 4/4tel takt -> 1 beat = 4 main steps = 4*8 = 32 sub steps
 	// 120 bpm 4/4tel = 120 * 1 beat / 60sec = 120 * 32 in 60 sec;
-	seq_deltaT 	= (1000*60)/bpm; 	//bei 12 = 500ms = time for one beat
+	/* 1000.f, not 1000: see seq_getDeltaTShuffleDelay(). The integer division
+	   truncated the beat period before this became a float. */
+	seq_deltaT 	= (1000.f*60.f)/bpm; 	//bei 12 = 500ms = time for one beat
 	seq_deltaT /= 96.f; //we run the internal clock at 96ppq -> seq clock 32 ppq == prescaler 3, midi clock 24 ppq == prescale 4
 	seq_deltaT *= 4;
 	//32.f;					// time for one beat / number of steps per beat
