@@ -125,9 +125,13 @@ void led_initPatternSelectLeds()
 //--------------------------------------------
 void led_clearVoiceLeds()
 {
+	/* Byte 0 holds LED_PAGE_UP in bit 0 and LED_VOICE1..7 in bits 1 to 7
+	   (enum LedNumbers), so clearing the voices means keeping bit 0. The mask
+	   was 0x80, which kept bit 7 - LED_VOICE7, HH OPN - and cleared PAGE UP
+	   along with the other six voices. */
 	uint8_t arrayPos = LED_VOICE1/8;
-	dout_outputData[arrayPos] &= 0x80;
-	led_originalLedState[arrayPos] &= 0x80;
+	dout_outputData[arrayPos] &= 0x01;
+	led_originalLedState[arrayPos] &= 0x01;
 }
 //--------------------------------------------
 void led_setActivePage(uint8_t pageNr)
