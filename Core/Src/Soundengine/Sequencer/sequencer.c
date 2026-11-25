@@ -719,7 +719,7 @@ IN_ITCM_RAM void seq_setPendingPatternActive()
 		if(1) {
 
 			//update for song screen to follow patterns
-			menu_songMenuPosition = seq_songPositionPointer;
+			menu_setSongPosition(seq_songPositionPointer);
 
 			if( menu_activePage < PATTERN_LOAD_PAGE || menu_activePage > SONG_MODE_PAGE)
 			{
@@ -801,7 +801,7 @@ IN_ITCM_RAM void seq_setPendingPatternActive()
 	if(1) {
 
 				//update for song screen to follow patterns
-				menu_songMenuPosition = seq_songPositionPointer;
+				menu_setSongPosition(seq_songPositionPointer);
 
 				if( menu_activePage < PATTERN_LOAD_PAGE || menu_activePage > SONG_MODE_PAGE)
 				{
@@ -2151,6 +2151,9 @@ void seq_setStepCondition(uint8_t pattern, uint8_t track, uint8_t step, uint8_t 
 //------------------------------------------------------------------------------
 void seq_addPatternToSong(uint8_t patternNr)
 {
+	/* writes through the cursor from the record path, so it does not get to
+	   assume the menu has been there first */
+	if(menu_songMenuPosition >= MAX_SONG_LENGTH) menu_setSongPosition(0);
 	seq_activeSong[menu_songMenuPosition] = patternNr;
 	if(menu_songMenuPosition < (MAX_SONG_LENGTH-1))
 	{

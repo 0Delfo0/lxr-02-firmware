@@ -50,6 +50,8 @@ extern uint8_t menu_shownPattern;
 extern uint8_t menu_muteModeActive;
 extern uint8_t menu_activeBar;
 extern uint8_t menu_songMenuPosition; //used to show the list in the display and scroll through it
+/** set the song page cursor, bounded to the 64 song slots (see menu.c) */
+void menu_setSongPosition(uint8_t pos);
 
 #define NUM_PRESET_LOCATIONS 6 //kit, pattern, morph, Song, project, all
 extern uint8_t menu_selectedPresetNr[NUM_PRESET_LOCATIONS];
