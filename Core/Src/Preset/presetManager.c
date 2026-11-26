@@ -2581,34 +2581,30 @@ FRESULT preset_saveProject(uint8_t presetNr)
 	char text[17];
 
 	//Save Project name
-	//open the file
+	/* No check between the write and the close, which is the shape every other
+	   save path in this file already has. preset_fwrite()'s result is sticky
+	   (#73) and preset_fcloseWrite() reports it, so the early return that used
+	   to sit between them gained nothing and skipped the close - and with
+	   _FS_LOCK 1 (FATFS/Target/ffconf.h) FatFs has one lock entry, so a single
+	   unclosed file is the whole card: every later f_open() of anything else
+	   gets FR_TOO_MANY_OPEN_FILES until the next f_mount() calls clear_lock().
+	   That is #7, and the window is two free clusters - enough for the two
+	   mkdirs, not enough for the first cluster of prj.nfo.
+
+	   Both exits now go through preset_abortSdOperation(), which does the
+	   display and timer cleanup these two did by hand and also removes
+	   /projNNn, which the comment above preset_pendingNewFolder requires and
+	   neither of them did (#129). */
 	res = preset_fopenWrite((FIL*)&SDFile, "prj.nfo");
-	if(res != FR_OK) {
-		lcd_process_display_interrupt = 1;
-		preset_initTmpFolder();
-#if USE_INTERRUPT_ONLY_DURING_SAVE_PROJ
-			HAL_TIM_Base_Stop_IT(&htim2);	//calc sample interrupt - prio 1
-#else
+	if(res != FR_OK)
+		return preset_abortSdOperation(res);
 
-#endif
-
-		return res;
-	}
 	//write preset name to file
-	res = preset_fwrite((FIL*)&SDFile, (void*)savefileNames[presetNr][PROJECT_NAMES],8);
-	if(res != FR_OK) {
-		lcd_process_display_interrupt = 1;
-		preset_initTmpFolder();
-#if USE_INTERRUPT_ONLY_DURING_SAVE_PROJ
-			HAL_TIM_Base_Stop_IT(&htim2);	//calc sample interrupt - prio 1
-#else
-
-#endif
-
-		return res;
-	}
-	//close the file
-	f_close((FIL*)&SDFile);
+	preset_fwrite((FIL*)&SDFile, (void*)savefileNames[presetNr][PROJECT_NAMES],8);
+	//close the file, which reports a write that failed
+	res = preset_fcloseWrite((FIL*)&SDFile);
+	if(res != FR_OK)
+		return preset_abortSdOperation(res);
 
 //	soundengine_process();
 	//save globals
@@ -2626,17 +2622,10 @@ FRESULT preset_saveProject(uint8_t presetNr)
 		lcd_string(text);
 	//	soundengine_process();
 		res = preset_saveDrumsetSD(i, 0);
-		if(res != FR_OK) {
-			lcd_process_display_interrupt = 1;
-			preset_initTmpFolder();
-#if USE_INTERRUPT_ONLY_DURING_SAVE_PROJ
-			HAL_TIM_Base_Stop_IT(&htim2);	//calc sample interrupt - prio 1
-#else
-
-#endif
-
-			return res;
-		}
+		/* The two sibling calls below already abort properly; this one did the
+		   cleanup by hand and left /projNNn behind (#129). */
+		if(res != FR_OK)
+			return preset_abortSdOperation(res);
 	//	soundengine_process();
 		res = preset_savePatternSD(i);
 		if(res != FR_OK) {
