@@ -537,6 +537,21 @@ static void buttonHandler_handleModeButtons(uint8_t mode) {
 	}
 }
 //--------------------------------------------------------
+/* This writes buttonHandler_mutedVoices, which is only ever read to draw the
+   voice LEDs - the gate the sequencer and the engine test is seq_mutedTracks,
+   and only seq_setMute() writes that. Telling the sequencer was left to the
+   caller, and of the two callers only the panel did it: the mute-mode button
+   sent SEQ_MUTE_TRACK right after this call, while NRPN 1000-1006
+   (frontPanelParser.c:96-101) did not. So the documented NRPN lit the LED and
+   the voice kept playing - measured at 0.0 dB against -62.5 dB for NRPN
+   200-206, which is the path that works (#76).
+
+   Sending it from here means the two bitmasks cannot disagree whoever asks,
+   and the two copies of the idiom at the mute-mode button go away. The route
+   into the engine is unchanged and still the only one: frontPanel_sendData()
+   feeds frontParser_parseUartData() directly on this build
+   (frontPanelParser.c), so FRONT_SEQ_MUTE_TRACK reaches seq_setMute() at
+   CortexParser.c:1096. */
 void buttonHandler_muteVoice(uint8_t voice, uint8_t isMuted) {
 	DISABLE_CONV_WARNING
 	if (isMuted) {
@@ -547,6 +562,8 @@ void buttonHandler_muteVoice(uint8_t voice, uint8_t isMuted) {
 
 	}
 	END_DISABLE_CONV_WARNING
+
+	frontPanel_sendData(SEQ_CC, isMuted ? SEQ_MUTE_TRACK : SEQ_UNMUTE_TRACK, voice);
 
 	//muted tracks are lit
 	if (menu_muteModeActive) {
@@ -1579,11 +1596,9 @@ static void buttonHandler_voiceButtonPressed(uint8_t voiceNr)
 			if (buttonHandler_mutedVoices & (1 << voiceNr)) {
 				//unmute tracks 0-7
 				buttonHandler_muteVoice(voiceNr, 0);
-				frontPanel_sendData(SEQ_CC, SEQ_UNMUTE_TRACK, voiceNr);
 			} else {
 				//mute tracks 0-7
 				buttonHandler_muteVoice(voiceNr, 1);
-				frontPanel_sendData(SEQ_CC, SEQ_MUTE_TRACK, voiceNr);
 			}
 
 		}
@@ -1591,12 +1606,11 @@ static void buttonHandler_voiceButtonPressed(uint8_t voiceNr)
 		else {
 			if (menu_activePage == PERF_PAGE) {//(buttonHandler_stateMemory.selectButtonMode == SELECT_MODE_PERF) {
 				//shift-voice in perf mode -> unmute all tracks up to and including selected voice which are muted
+				/* the third open-coded copy of "clear the bit and tell the
+				   sequencer"; buttonHandler_muteVoice() is that pair now */
 				for (uint8_t i = 0; i <= voiceNr; i++) {
 					if (buttonHandler_mutedVoices & (1 << i)) {
-						frontPanel_sendData(SEQ_CC, SEQ_UNMUTE_TRACK, i);
-						DISABLE_CONV_WARNING
-						buttonHandler_mutedVoices &= ~(1<<i);
-						END_DISABLE_CONV_WARNING
+						buttonHandler_muteVoice(i, 0);
 					}
 				}
 				buttonHandler_showMuteLEDs();

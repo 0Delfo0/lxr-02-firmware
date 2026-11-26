@@ -20,7 +20,7 @@
  },
  "firmware": {
   "base": "Erica Synths LXR-02 v1.7",
-  "source_commit": "5b0e554db298aa72115f2809cc22f557d4df75ae"
+  "source_commit": "0477628ef72d39743af266e230740d7183e57c9e"
  },
  "counts": {
   "NUM_PARAMS": 305,
@@ -38,7 +38,7 @@
  "midi_rules": {
   "cc": "Sound params 0..126 map to CC (id+1) on the voice's channel or the global channel. CC0 is bank select (kit load), so param 127 is not reachable via CC.",
   "nrpn": "Sound params 128..246 map to NRPN (id-128): CC99=msb, CC98=lsb, CC6=value (7-bit).",
-  "mute_nrpn": "NRPN 1000..1006 mute voice 1..7 (value 0/1).",
+  "mute_nrpn": "NRPN 200..206 and NRPN 1000..1006 both mute voice 1..7 (value 0/1). They are separate paths: 200..206 (CC2_MUTE_x) reach seq_setMute() through midiParser_ccHandler(), 1000..1006 (NRPN_MUTE_x) go through buttonHandler_muteVoice(), which also drives the panel LEDs. Before firmware 1.7-vt the second range lit the LED without muting (#76).",
   "freeze_nrpn": "NRPN 210 (CC99=1, CC98=82) engages the freeze FX (PAR_FX_TYPE 6): CC6 value 0 = release, 1..8 = 1/4, 1/4T, 1/8, 1/8T, 1/16, 1/16T, 1/32, 1/32T, 9..127 = rate set by PAR_FX_P1. Not a parameter. Same values as SysEx FX_FREEZE (docs/freeze.md).",
   "panel_edits": "Stock firmware does not transmit CC/NRPN for panel edits. Use SysEx parameter echo (docs/sysex.md) on firmware that supports it.",
   "mod_target_values": "VEL_DEST_x / TARGET_LFOx / P1_DEST / P2_DEST hold a modTargets index in memory, .snd files and SysEx; over NRPN the value is the target parameter number."
