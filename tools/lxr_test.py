@@ -43,8 +43,13 @@ CMD = {
     "SEQ_TRANSPORT": 0x48, "SEQ_ROLL": 0x49,
     "ACK": 0x7E, "NAK": 0x7F,
 }
-NAK_ERRORS = {0: "unknown command", 1: "checksum", 2: "version", 3: "length",
-              4: "range", 5: "read only", 6: "busy", 7: "sd error"}
+# Taken from the firmware's own enum, Core/Inc/Sysex/SysexCodec.h:77-85. The
+# table that used to be here had every name but "checksum" against the wrong
+# number, so a NAK saying BUSY - which is a retry - printed as "read only",
+# which is a different request. There is no code 0.
+NAK_ERRORS = {1: "checksum", 2: "unknown command", 3: "length", 4: "range",
+              5: "busy", 6: "sequence", 7: "version", 8: "read only",
+              9: "sd error"}
 
 # PARAM_GET takes at most 64 ids per frame (docs/sysex.md section 5.15).
 MAX_IDS = 64
