@@ -2476,6 +2476,25 @@ uint8_t seq_isAutomationStepArmed()
 //------------------------------------------------------------------------
 void seq_recordAutomation(uint8_t voice, uint8_t dest, uint8_t value)
 {
+	/* Four of the CCs that arrive here are not sound parameters at all: bank
+	   select picks a kit, and the three NRPN CCs carry an address and a value
+	   meant for something else. Recording one writes an automation destination
+	   that means nothing into the step, so a host sending an NRPN - or any
+	   controller sending bank select - quietly fills the pattern with junk
+	   while REC is on. The guard sits here rather than at the call sites
+	   because there are four of them: both branches of
+	   midiParser_parseMidiMessage() and two in CortexParser.c.
+
+	   The same four slots are kept out of the kit and morph sweeps by
+	   preset_isTransportParameter() (#103), which names them in parameter
+	   numbering - 5, 97, 98, 127 - where these are the CC numbers they arrive
+	   as. One set of reserved slots, two numbering schemes. */
+	if(dest == CC_BANK_CHANGE || dest == NRPN_DATA_ENTRY_COARSE ||
+			dest == NRPN_FINE || dest == NRPN_COARSE)
+	{
+		return;
+	}
+
 	/* seq_recordActive without seq_running is a real state - REC armed, the
 	   sequencer stopped - and the step index is -1 there. It used to be
 	   assigned to a uint8_t, so it became 255: seq_intIsMainStepActive() then
