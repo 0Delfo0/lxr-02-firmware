@@ -1350,6 +1350,24 @@ static void buttonHandler_seqButtonReleased(uint8_t seqButtonPressed)
 	{
 
 	}
+	/* Cancel the step's long-press timer before the modifier branches below
+	   return. A step released while SHIFT or LOAD/SAVE was held used to take
+	   one of those returns with the timer still armed, so buttonHandler_tick()
+	   fired buttonHandler_armTimerActionStep() afterwards and the step armed
+	   itself for automation with nobody touching anything.
+
+	   The call both cancels and reports whether the timed action had already
+	   happened, and the two branches further down need the second half of
+	   that, so it is called once here and the answer is reused. Calling it
+	   again below would see NO_STEP_SELECTED rather than TIMER_ACTION_OCCURED
+	   and let a path run that used to return.
+
+	   The cancel sits here and not at the top of the function on purpose: the
+	   freeze and beat-repeat releases above return before any modifier is
+	   consulted, and disarming from there would send the panel a disarm it
+	   never needed. */
+	const uint8_t timedActionOccured = buttonHandler_TimerActionOccured();
+
 	if (buttonHandler_getShift()) // shift click is fully handled in "pressed"
 	{
 
@@ -1391,14 +1409,14 @@ static void buttonHandler_seqButtonReleased(uint8_t seqButtonPressed)
 	switch (buttonHandler_stateMemory.selectButtonMode) {
 	case SELECT_MODE_STEP:
 		//do nothing if timer action occurred - its already handled in the timer
-		if (buttonHandler_TimerActionOccured())
+		if (timedActionOccured)
 			return;
 		break;
 		//--- edit the pattern -> button sets and removes a step ---
 	case SELECT_MODE_VOICE:
 
 		//do nothing if timer action occured
-		if (buttonHandler_TimerActionOccured())
+		if (timedActionOccured)
 			return;
 		buttonHandler_setRemoveStep(ledNr, seqButtonPressed);
 
