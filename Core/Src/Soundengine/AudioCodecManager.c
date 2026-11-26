@@ -23,7 +23,10 @@ volatile INDTCMZ uint8_t bCurrentSampleValid = 0;
 //------------------------------------------------------------------
 int CodecInit(void)
 {
-    dma_buffer[0] = 32756;
+    /* dma_buffer[0] = 32756 was here: one sample at almost full scale, handed
+       to the codec DMA before the engine has filled anything, which is a click
+       at power-on. Nothing reads it back - both buffers are INDTCMZ and so
+       start silent. */
     codec_initCsCodec((uint32_t)dma_buffer, OUTPUT_DMA_SIZE*2,(uint32_t)dma_buffer2, OUTPUT_DMA_SIZE*2);
     return 0;
 }
