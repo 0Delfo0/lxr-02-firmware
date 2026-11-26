@@ -639,6 +639,37 @@ static uint8_t seq_determineNextPattern(uint8_t autoIncrement)
 
 #include "Soundengine/MIDI/Uart.h"
 
+/* A song reaching its end is a stop that nobody pressed, so the two things a
+   stop does have to happen anyway:
+
+   - the host has to be told, or anything synced to our clock keeps running
+     after we have gone quiet;
+   - the panel has to be told, or its START/STOP state still says running and
+     the next press of START is read as a stop, so the sequencer only starts on
+     the second press.
+
+   The three bytes are the same notification MidiParser.c:1494 sends when MTC
+   goes away - the other place the firmware stops itself - and
+   frontPanelParser.c:490 says what the panel does with them in as many words:
+   "cause the next press of start button to act properly".
+
+   The note off is not in that MTC path but is in seq_resetPosition(), which is
+   what the user's own stop runs: a song can end part way through a step, and a
+   stop that leaves a voice sounding is worse than one that does not.
+
+   noinline and out of ITCM on purpose. The caller lives in ITCM, where this
+   build has about 700 bytes free, and five calls written into it there cost
+   88 bytes of it; one call out to flash costs 8. */
+__attribute__((noinline)) static void seq_songEndStop(void)
+{
+	seq_setRunning(0);
+	seq_sendRealtime(MIDI_STOP);
+	voiceControl_noteOff(0xFF);
+	uart_sendFrontpanelByte(FRONT_SEQ_CC);
+	uart_sendFrontpanelByte(FRONT_SEQ_RUN_STOP);
+	uart_sendFrontpanelByte(0);
+}
+
 IN_ITCM_RAM void seq_setPendingPatternActive()
 {
   midi_process_block = 1;
@@ -1383,8 +1414,9 @@ IN_ITCM_RAM void seq_nextStep()
 			*/
 			if(seq_pendingPattern == SONG_END)
 			{
-				//TODO: check if this is enough? does GUI needs info?
-				seq_setRunning(0);
+				/* It was not enough, and the TODO that used to be here asked
+				   the right question: see seq_songEndStop(). */
+				seq_songEndStop();
 				//make sure pending pattern does not remain at 64 resulting in a seg fault.
 				seq_pendingPattern = seq_activeSong[0];
 				if(seq_pendingPattern >= 64) seq_pendingPattern  = 0;
