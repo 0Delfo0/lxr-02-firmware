@@ -321,6 +321,21 @@ static void frontParser_handleSysexData(unsigned char data)
 			const uint8_t currentPattern 	= absPat - currentTrack*8;
 			const uint8_t currentStep		= frontParser_sysexSeqStepNr - absPat*128;
 
+			/* Seven writes follow, indexed by all three of these. The decode
+			   above is the v1 geometry its own comment describes - 128 steps
+			   per track and 8 patterns - while this firmware has NUM_STEPS 64,
+			   NUM_PATTERN 64 and NUM_TRACKS 7, so currentStep reaches 127 and
+			   currentTrack is unbounded. Dropping a step that does not address
+			   a real one is the bounds half; that the decode itself is stale is
+			   a separate question about what the panel sends. */
+			if(currentPattern >= NUM_PATTERN || currentTrack >= NUM_TRACKS
+					|| currentStep >= NUM_STEPS)
+			{
+				frontParser_rxCnt = 0;
+				frontParser_sysexSeqStepNr++;
+				break;
+			}
+
 #if USE_PATTERN_EDIT_BUFFER
 			if( (currentPattern == seq_activePattern) )
 			{
@@ -536,8 +551,13 @@ static void frontParser_handleMidiMessage()
 		}
 		break;
 	case FRONT_SET_P1_VAL: { // cortex_midiMsg.status
-			uint8_t stepNr = cortex_midiMsg.data1;
-			uint8_t value = cortex_midiMsg.data2;
+			const uint8_t stepNr = cortex_midiMsg.data1;
+			const uint8_t value = cortex_midiMsg.data2;
+			/* data1 is a 7-bit panel byte and this is a write into a 64-step
+			   track, so 64 to 127 land past the end of it. The pattern and the
+			   track are bounded where they are selected. */
+			if(stepNr >= NUM_STEPS)
+				break;
 
 #if USE_PATTERN_EDIT_BUFFER
 			if( (currentPattern == seq_activePattern) )
@@ -555,8 +575,13 @@ static void frontParser_handleMidiMessage()
 		}
 		break;
 	case FRONT_SET_P2_VAL: { // cortex_midiMsg.status
-			uint8_t stepNr = cortex_midiMsg.data1;
-			uint8_t value = cortex_midiMsg.data2;
+			const uint8_t stepNr = cortex_midiMsg.data1;
+			const uint8_t value = cortex_midiMsg.data2;
+			/* data1 is a 7-bit panel byte and this is a write into a 64-step
+			   track, so 64 to 127 land past the end of it. The pattern and the
+			   track are bounded where they are selected. */
+			if(stepNr >= NUM_STEPS)
+				break;
 
 #if USE_PATTERN_EDIT_BUFFER
 			if( (currentPattern == seq_activePattern) )
@@ -756,11 +781,12 @@ static void frontParser_handleSeqCC()
 		break;
 
 	case FRONT_SEQ_STEP_CONDITION:
-		if(frontParser_shownPattern < NUM_PATTERN
-				&& frontParser_activeTrack < NUM_TRACKS
-				&& frontParser_activeStep < NUM_STEPS)
-			seq_setStepCondition(frontParser_shownPattern, frontParser_activeTrack,
-					frontParser_activeStep, cortex_midiMsg.data2);
+		/* This case used to carry the only copy of that three-index check in
+		   the file, which is what pointed at the other eighteen accesses. It is
+		   dead now: the three selections are checked where they are assigned,
+		   and nothing else assigns them. */
+		seq_setStepCondition(frontParser_shownPattern, frontParser_activeTrack,
+				frontParser_activeStep, cortex_midiMsg.data2);
 		break;
 
 	case FRONT_SEQ_EUKLID_LENGTH:
@@ -920,38 +946,58 @@ static void frontParser_handleSeqCC()
 		*/
 		break;
 
+	/* These two selections, with the active step set further down in
+	   FRONT_SEQ_REQUEST_STEP_PARAMS, are the indices of nineteen accesses to
+	   seq_subStepPattern and seq_stepTiming in this file, six of them writes.
+	   Each arrives as a 7-bit byte over the panel UART, so 0 to 127 against
+	   NUM_PATTERN 64, NUM_TRACKS 7 and NUM_STEPS 64. Checking them where they
+	   are selected rather than at the accesses is the point: one check per
+	   selection covers every use of it, and the parser boundary is the place
+	   that can be audited.
+
+	   Out of range means a corrupted or desynchronised byte, never a real
+	   selection, so the message is dropped and the previous selection stands.
+	   Clamping would quietly show the wrong pattern instead. */
 	case FRONT_SEQ_SET_SHOWN_PATTERN:
-		frontParser_shownPattern = cortex_midiMsg.data2;
+		if(cortex_midiMsg.data2 < NUM_PATTERN)
+			frontParser_shownPattern = cortex_midiMsg.data2;
 		break;
 	case FRONT_SEQ_SET_ACTIVE_TRACK:
-		frontParser_activeTrack = cortex_midiMsg.data2;
+		if(cortex_midiMsg.data2 < NUM_TRACKS)
+			frontParser_activeTrack = cortex_midiMsg.data2;
 		break;
 
 	case FRONT_SEQ_REQUEST_STEP_PARAMS:{
 
 		const uint8_t data2 = cortex_midiMsg.data2;
+		/* The local was already here and only the step-condition read below
+		   used it; the five reads in between took the raw member. They now
+		   share it, and it is bounded once. A read past the track sends the
+		   panel whatever follows the array, which it then displays as a step. */
+		if(data2 >= NUM_STEPS)
+			break;
 
 		/* send back probability, volume and note nr*/
 		uart_sendFrontpanelByte(FRONT_SEQ_CC);
 		uart_sendFrontpanelByte(FRONT_SEQ_VOLUME);
-		uart_sendFrontpanelByte(seq_patternSet.seq_subStepPattern[frontParser_shownPattern][frontParser_activeTrack][cortex_midiMsg.data2].volume&STEP_VOLUME_MASK);
+		uart_sendFrontpanelByte(seq_patternSet.seq_subStepPattern[frontParser_shownPattern][frontParser_activeTrack][data2].volume&STEP_VOLUME_MASK);
 
 		uart_sendFrontpanelByte(FRONT_SEQ_CC);
 		uart_sendFrontpanelByte(FRONT_SEQ_NOTE);
-		uart_sendFrontpanelByte(seq_patternSet.seq_subStepPattern[frontParser_shownPattern][frontParser_activeTrack][cortex_midiMsg.data2].note);
+		uart_sendFrontpanelByte(seq_patternSet.seq_subStepPattern[frontParser_shownPattern][frontParser_activeTrack][data2].note);
 
 		uart_sendFrontpanelByte(FRONT_SEQ_CC);
 		uart_sendFrontpanelByte(FRONT_SEQ_PROB);
-		uart_sendFrontpanelByte(seq_patternSet.seq_subStepPattern[frontParser_shownPattern][frontParser_activeTrack][cortex_midiMsg.data2].prob);
+		uart_sendFrontpanelByte(seq_patternSet.seq_subStepPattern[frontParser_shownPattern][frontParser_activeTrack][data2].prob);
 
 
 		uart_sendFrontpanelByte(FRONT_SEQ_CC);
 		uart_sendFrontpanelByte(FRONT_SEQ_FLAM);
-		uart_sendFrontpanelByte(seq_patternSet.seq_stepTiming[frontParser_shownPattern][frontParser_activeTrack][cortex_midiMsg.data2].flam);
+		uart_sendFrontpanelByte(seq_patternSet.seq_stepTiming[frontParser_shownPattern][frontParser_activeTrack][data2].flam);
 
 		uart_sendFrontpanelByte(FRONT_SEQ_CC);
 		uart_sendFrontpanelByte(FRONT_SEQ_SHIFT);
-		uart_sendFrontpanelByte(seq_patternSet.seq_stepTiming[frontParser_shownPattern][frontParser_activeTrack][cortex_midiMsg.data2].shift);
+		uart_sendFrontpanelByte(seq_patternSet.seq_stepTiming[frontParser_shownPattern][frontParser_activeTrack][data2].shift);
 
 		uart_sendFrontpanelByte(FRONT_SEQ_CC);
 		uart_sendFrontpanelByte(FRONT_SEQ_STEP_CONDITION);
@@ -1004,6 +1050,10 @@ static void frontParser_handleSeqCC()
 
 
 
+		/* The active step is set here as a side effect of the panel asking for
+		   that step's parameters - there is no separate select command - and
+		   the check at the top of this case has already dropped an out-of-range
+		   one, so this assignment needs no guard of its own. */
 		frontParser_activeStep = cortex_midiMsg.data2;
 	}
 		break;
