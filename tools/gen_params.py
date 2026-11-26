@@ -393,7 +393,10 @@ def build():
             "cc": "Sound params 0..126 map to CC (id+1) on the voice's channel or the global channel. "
                   "CC0 is bank select (kit load), so param 127 is not reachable via CC.",
             "nrpn": "Sound params 128..%d map to NRPN (id-128): CC99=msb, CC98=lsb, CC6=value (7-bit)." % (end_sound - 1),
-            "mute_nrpn": "NRPN 1000..1006 mute voice 1..7 (value 0/1).",
+            "mute_nrpn": "NRPN 200..206 and NRPN 1000..1006 both mute voice 1..7 (value 0/1). "
+                         "They are separate paths: 200..206 (CC2_MUTE_x) reach seq_setMute() "
+                         "through midiParser_ccHandler(), 1000..1006 (NRPN_MUTE_x) go through "
+                         "buttonHandler_muteVoice(), which also drives the panel LEDs. Before firmware 1.7-vt the second range lit the LED without muting (#76).",
             "freeze_nrpn": "NRPN 210 (CC99=1, CC98=82) engages the freeze FX (PAR_FX_TYPE 6): CC6 value 0 = release, "
                            "1..8 = 1/4, 1/4T, 1/8, 1/8T, 1/16, 1/16T, 1/32, 1/32T, 9..127 = rate set by PAR_FX_P1. "
                            "Not a parameter. Same values as SysEx FX_FREEZE (docs/freeze.md).",
