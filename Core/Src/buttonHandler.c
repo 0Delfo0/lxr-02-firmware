@@ -141,26 +141,39 @@ static void buttonHandler_armTimerActionStep(int8_t stepNr) {
 
   /////////////////////
 
+  /* The voice, not 0. The line above sends the panel menu_getActiveVoice(),
+     and CortexParser.c:582 pulls that same byte back out as the track
+     seq_armAutomationStep() arms - so the sequencer records into the active
+     voice while this preview used to read voice 1. Arming a step on DRUM 2
+     showed, and temporarily applied, whatever DRUM 1 had locked on that step.
+
+     And the parameter number is stored raw. seq_recordAutomation() writes
+     dest unchanged (sequencer.c:2549), autoNode_setDestination() reads it
+     unchanged and treats it as a CC below 128 and as CC2 above
+     (automationNode.c:22-41), and an empty slot is NO_AUTOMATION, which is
+     255. The "- 1" here, and the 254 it was tested against, moved the preview
+     one parameter below the lock's own target: a lock on 30 wrote its value
+     into 29. Testing the sentinel by name removes both the subtraction and
+     the magic number. */
   PatternSet* patSet = get_seq_patternSet_p();
-  uint8_t parNr = patSet->seq_subStepPattern[seq_activePattern][0][stepNr].param1Nr - 1;
+  const Step * const armedStep =
+      &patSet->seq_subStepPattern[seq_activePattern][menu_getActiveVoice()][stepNr];
 
-  if (parNr != 254)
+  if (armedStep->param1Nr != NO_AUTOMATION)
   {
-    buttonHandler_originalValue[0] = activeParameters[parNr];
-    activeParameters[parNr] = patSet->seq_subStepPattern[seq_activePattern][0][stepNr].param1Val;
+    buttonHandler_originalValue[0] = activeParameters[armedStep->param1Nr];
+    activeParameters[armedStep->param1Nr] = armedStep->param1Val;
 
-    buttonHandler_originalParameter[0] = parNr;
+    buttonHandler_originalParameter[0] = armedStep->param1Nr;
     buttonHandler_resetLock1 = 1;
   }
 
-  parNr = patSet->seq_subStepPattern[seq_activePattern][0][stepNr].param2Nr - 1;
-
-  if (parNr != 254)
+  if (armedStep->param2Nr != NO_AUTOMATION)
   {
-    buttonHandler_originalValue[1] = activeParameters[parNr];
-    activeParameters[parNr] = patSet->seq_subStepPattern[seq_activePattern][0][stepNr].param2Val;
-  
-    buttonHandler_originalParameter[1] = parNr;
+    buttonHandler_originalValue[1] = activeParameters[armedStep->param2Nr];
+    activeParameters[armedStep->param2Nr] = armedStep->param2Val;
+
+    buttonHandler_originalParameter[1] = armedStep->param2Nr;
     buttonHandler_resetLock2 = 1;
   }
   ///////////////
