@@ -177,4 +177,37 @@ else()
     target_link_libraries(lxr_cli PRIVATE lxr_core m)
     enable_testing()
     add_test(NAME selftest COMMAND lxr_cli selftest)
+
+    # The tests in tests/emu. They used to be built by hand, one gcc line per
+    # session, which is how a test ends up compiling against the wrong include
+    # order and proving something else (#128). They are globbed on purpose:
+    # the failure to avoid is a new test file silently not being built, which
+    # an explicit list invites and CONFIGURE_DEPENDS does not.
+    option(LXR_EMU_TESTS "Build the tests in tests/emu" ON)
+    if(LXR_EMU_TESTS)
+        file(GLOB LXR_TEST_SOURCES CONFIGURE_DEPENDS ${FW}/tests/emu/test_*.c)
+        list(LENGTH LXR_TEST_SOURCES LXR_TEST_COUNT)
+        message(STATUS "tests/emu: ${LXR_TEST_COUNT} tests")
+        # host_dir.c backs tests/emu/host_dir.h; the other two helpers
+        # (card_fill.h, fx_setup.h) are header-only.
+        add_library(lxr_test_support STATIC ${FW}/tests/emu/host_dir.c)
+        target_link_libraries(lxr_test_support PUBLIC lxr_core)
+        target_include_directories(lxr_test_support PUBLIC ${FW}/tests/emu)
+        # Two tests take the reference project (#80) as argv[1]. Which ones is
+        # read from the sources rather than listed here, so a new test that
+        # needs the fixture gets it without anybody remembering to say so.
+        foreach(src ${LXR_TEST_SOURCES})
+            get_filename_component(name ${src} NAME_WE)
+            add_executable(${name} ${src})
+            target_link_libraries(${name} PRIVATE lxr_test_support m)
+            file(READ ${src} _body)
+            string(FIND "${_body}" "argv[1]" _takes_arg)
+            if(_takes_arg EQUAL -1)
+                add_test(NAME ${name} COMMAND ${name})
+            else()
+                add_test(NAME ${name} COMMAND ${name} ${FW}/test-project/PROJ63)
+            endif()
+            unset(_body)
+        endforeach()
+    endif()
 endif()
