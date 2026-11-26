@@ -181,12 +181,23 @@ void sd_formatRoutine()
 		//create glo.cfg file
 		preset_createGlobals();
 
-		//load init sound
-		preset_init(0);
-		//save init sound to card
+		/* preset_init(0) is the init *sound* for kit 0 and nothing else, so
+		   what used to be saved here was seq_patternSet as it stands at this
+		   point in main() - still all zero, because seq_init() runs inside
+		   soundengine_init() a hundred lines further down. Every track length
+		   in the project written onto a freshly formatted card was therefore
+		   0 rather than 16, and that project is the first thing the card
+		   offers.
 
-		sprintf(savefileNames[0][PROJECT_NAMES], "Init");
-		//preset_saveDrumsetSD(0);
+		   preset_createProject() is the function the Save page already uses
+		   for a project that does not exist yet: it clears all 64 patterns,
+		   sets every kit to the init sound, initialises the song and names the
+		   project. Calling it instead of doing a third of the job by hand also
+		   removes the duplicate.
+
+		   Safe here by construction: this routine ends in while(1) asking for
+		   a reboot, so nothing downstream sees the state it sets up. */
+		preset_createProject(0);
 		preset_saveProject(0);
 
 		//success
