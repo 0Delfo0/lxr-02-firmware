@@ -20,6 +20,25 @@
 //-------------------------------------------------
 float DecayEg_calcSlopeValue(float val, float slope)
 {
+	/* EG Slope 0 gives slope == -1 (DecayEg_setSlope: amount is -1 and
+	   2*-1/(1-(-1)) is -1), so the numerator is 0 for every val - that is the
+	   intended "no pitch sweep". Pitch Decay 127 gives a decay step of 0
+	   (DecayEg_calcTime), so the envelope stays at val == 1 and the denominator
+	   is 1 + (-1)*1 = 0 as well. 0/0 is NaN and it goes into the oscillator's
+	   pitch: 64 of 64 samples, measured.
+
+	   The guard goes here and not in DecayEg_setSlope(), where the fix for the
+	   other extreme lives. Clamping the amount away from -1 too would give
+	   slope 0 a small sweep at every decay value and move every kit that uses
+	   it, which is what #93 was about. This changes exactly one output: with
+	   slope == -1 the expression below is 0*val/(1-|val|), which is 0 wherever
+	   it is defined, so returning 0 is the same number everywhere except at
+	   |val| == 1, where it was NaN.
+
+	   Reported upstream as erica-synths/lxr-desktop-app#18 by Justin Worrall
+	   on 2026-11-27, whose one-line guard this is. */
+	if(slope <= -1.f)
+		return 0.f;
 	return (1+slope)*val/(1+slope*fabsf(val));
 }
 //-------------------------------------------------
